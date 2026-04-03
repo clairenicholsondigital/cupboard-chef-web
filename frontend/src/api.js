@@ -18,13 +18,22 @@ export class ApiError extends Error {
 
 async function request(path, options = {}) {
   const baseUrl = getApiBaseUrl();
-  const response = await fetch(`${baseUrl}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
-    ...options,
-  });
+  let response;
+  try {
+    response = await fetch(`${baseUrl}${path}`, {
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.headers || {}),
+      },
+      ...options,
+    });
+  } catch (error) {
+    throw new ApiError(
+      `Unable to reach API at ${baseUrl}. Check network/CORS configuration and API availability.`,
+      0,
+      { cause: error instanceof Error ? error.message : String(error) },
+    );
+  }
 
   let payload = null;
   const contentType = response.headers.get("content-type") || "";
@@ -67,6 +76,14 @@ export function loginWithEmail(data) {
   return request("/auth/login", {
     method: "POST",
     body: JSON.stringify(data),
+  }).catch((error) => {
+    if (error instanceof ApiError && error.status === 404) {
+      return request("/login", {
+        method: "POST",
+        body: JSON.stringify(data),
+      });
+    }
+    throw error;
   });
 }
 

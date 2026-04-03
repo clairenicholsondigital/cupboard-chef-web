@@ -10,6 +10,7 @@ app = FastAPI(title="Cupboard Chef API")
 
 DEFAULT_ALLOWED_ORIGINS = [
     "https://food.helixscribe.cloud",
+    "https://www.food.helixscribe.cloud",
     "http://localhost:5173",
     "http://localhost:3000",
 ]
@@ -23,6 +24,7 @@ allowed_origins = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
+    allow_origin_regex=r"https://([a-z0-9-]+\.)?helixscribe\.cloud",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
