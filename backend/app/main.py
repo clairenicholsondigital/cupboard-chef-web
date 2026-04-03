@@ -1,10 +1,32 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from uuid import UUID
+import os
 from app.db import get_conn
 
 app = FastAPI(title="Cupboard Chef API")
+
+DEFAULT_ALLOWED_ORIGINS = [
+    "https://food.helixscribe.cloud",
+    "http://localhost:5173",
+    "http://localhost:3000",
+]
+
+allowed_origins = [
+    origin.strip()
+    for origin in os.getenv("CORS_ALLOWED_ORIGINS", ",".join(DEFAULT_ALLOWED_ORIGINS)).split(",")
+    if origin.strip()
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 class FoodEntryCreate(BaseModel):
     user_id: UUID
