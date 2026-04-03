@@ -1,9 +1,7 @@
 import psycopg
 from contextlib import contextmanager
 
-
-DATABASE_URL = "postgresql://cupboardchef:Tennis2!@172.17.0.1:32770/cupboardchef_db"
-
+DATABASE_URL = "postgresql://cupboardchef:Tennis2!@postgresql-ktbx-postgresql-1:5432/cupboardchef_db"
 
 @contextmanager
 def get_conn():
