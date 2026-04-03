@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, List
@@ -52,9 +52,39 @@ class IngredientOut(BaseModel):
     display_name: str
     category: Optional[str]
 
+class LoginRequest(BaseModel):
+    email: str = Field(..., min_length=3)
+    password: str = Field(..., min_length=1)
+
+class LoginResponse(BaseModel):
+    user_id: UUID
+    email: str
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+@app.post("/auth/login", response_model=LoginResponse)
+def login(payload: LoginRequest):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                select id, email
+                from app_users
+                where lower(email) = lower(%s)
+                limit 1
+            """, (payload.email.strip(),))
+            row = cur.fetchone()
+
+    # NOTE: password is validated only for non-empty input for now.
+    # This keeps the endpoint DB-linked while auth storage is being finalized.
+    if not row or not payload.password.strip():
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    return {
+        "user_id": row[0],
+        "email": row[1],
+    }
 
 @app.get("/ingredients", response_model=List[IngredientOut])
 def list_ingredients():

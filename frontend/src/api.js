@@ -63,6 +63,13 @@ export function createFoodEntry(data) {
   });
 }
 
+export function loginWithEmail(data) {
+  return request("/auth/login", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
 // Backend routes for cupboard items are not available yet in backend/app/main.py.
 // These methods are intentionally left as explicit stubs so UI can show honest status.
 export function cupboardApiAvailable() {

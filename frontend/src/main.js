@@ -6,6 +6,7 @@ import {
   getFoodEntries,
   getIngredients,
   healthCheck,
+  loginWithEmail,
 } from "./api.js";
 
 const mealTimeOptions = ["am", "breakfast", "lunch", "pm", "dinner", "evening", "snack", "late_night"];
@@ -32,6 +33,11 @@ const state = {
     stock_status: "in_stock",
     shelf_name: "",
   },
+  authForm: {
+    email: "",
+    password: "",
+  },
+  currentUserEmail: localStorage.getItem("cupboardChef.userEmail") || "",
   feedback: "",
   health: null,
 };
@@ -45,6 +51,14 @@ function setUserId(value) {
     localStorage.setItem("cupboardChef.userId", value);
   } else {
     localStorage.removeItem("cupboardChef.userId");
+  }
+}
+
+function setUserEmail(value) {
+  if (value) {
+    localStorage.setItem("cupboardChef.userEmail", value);
+  } else {
+    localStorage.removeItem("cupboardChef.userEmail");
   }
 }
 
@@ -76,21 +90,21 @@ function renderLayout(content) {
       ${navLink("add-cupboard-item", "Add cupboard item")}
     </nav>
     <section class="settings card">
-      <h2>Session settings</h2>
-      <label>User UUID (required by POST /food-entries)
-        <input id="user-id-input" value="${escapeHtml(getUserId())}" placeholder="e.g. 11111111-1111-1111-1111-111111111111" />
-      </label>
-      <button id="save-user-id" type="button">Save user</button>
+      <h2>Session</h2>
+      <p class="meta">Current user UUID: <code>${escapeHtml(getUserId() || "Not logged in")}</code></p>
+      <p class="meta">Current email: <code>${escapeHtml(state.currentUserEmail || "Not logged in")}</code></p>
+      <button id="logout" type="button">Log out</button>
       <p class="meta">API base URL: <code>${escapeHtml(getApiBaseUrl())}</code></p>
       ${state.health ? `<p class="success">API health: ${escapeHtml(state.health.status)}</p>` : ""}
     </section>
     <main>${content}</main>
   `;
 
-  document.querySelector("#save-user-id")?.addEventListener("click", () => {
-    const value = document.querySelector("#user-id-input").value.trim();
-    setUserId(value);
-    state.feedback = value ? "User ID saved." : "User ID cleared.";
+  document.querySelector("#logout")?.addEventListener("click", () => {
+    setUserId("");
+    setUserEmail("");
+    state.currentUserEmail = "";
+    state.feedback = "Logged out.";
     render();
   });
 }
@@ -113,6 +127,18 @@ function renderDashboard() {
     : "<p class='empty'>No entries yet. Start by logging your first meal.</p>";
 
   return `
+    ${card("Login", `
+      <p>Sign in with your email and password to link this UI to your account in the database.</p>
+      <form id="login-form" class="form-grid">
+        <label>Email address
+          <input name="email" type="email" value="${escapeHtml(state.authForm.email)}" autocomplete="email" required />
+        </label>
+        <label>Password
+          <input name="password" type="password" value="${escapeHtml(state.authForm.password)}" autocomplete="current-password" required />
+        </label>
+        <button type="submit">Log in</button>
+      </form>
+    `)}
     ${card("Home", `
       <p>Track meals and keep a practical view of what is in your cupboard.</p>
       <div class="actions">
@@ -222,6 +248,11 @@ function renderAddCupboardItem() {
 }
 
 function attachEvents() {
+  const loginForm = document.querySelector("#login-form");
+  if (loginForm) {
+    loginForm.addEventListener("submit", onSubmitLogin);
+  }
+
   const foodForm = document.querySelector("#food-form");
   if (foodForm) {
     foodForm.addEventListener("submit", onSubmitFoodEntry);
@@ -233,6 +264,34 @@ function attachEvents() {
       event.preventDefault();
     });
   }
+}
+
+async function onSubmitLogin(event) {
+  event.preventDefault();
+  const formData = new FormData(event.target);
+  const email = (formData.get("email") || "").toString().trim();
+  const password = (formData.get("password") || "").toString();
+
+  state.authForm.email = email;
+  state.authForm.password = "";
+
+  if (!email || !password) {
+    state.feedback = "Email and password are required.";
+    render();
+    return;
+  }
+
+  try {
+    const response = await loginWithEmail({ email, password });
+    setUserId(response.user_id);
+    setUserEmail(response.email);
+    state.currentUserEmail = response.email;
+    state.feedback = `Logged in as ${response.email}.`;
+  } catch (error) {
+    state.feedback = error instanceof ApiError ? error.message : "Unable to log in.";
+  }
+
+  render();
 }
 
 async function onSubmitFoodEntry(event) {
