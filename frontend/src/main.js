@@ -13,6 +13,27 @@ const mealTimeOptions = ["am", "breakfast", "lunch", "pm", "dinner", "evening", 
 const inputMethodOptions = ["text", "voice", "imported"];
 const stockStatusOptions = ["in_stock", "low", "out_of_stock"];
 
+function readStoredValue(key) {
+  try {
+    return localStorage.getItem(key) || "";
+  } catch {
+    return "";
+  }
+}
+
+function writeStoredValue(key, value) {
+  try {
+    if (value) {
+      localStorage.setItem(key, value);
+    } else {
+      localStorage.removeItem(key);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const state = {
   route: "dashboard",
   loading: false,
@@ -37,29 +58,44 @@ const state = {
     email: "",
     password: "",
   },
-  currentUserEmail: localStorage.getItem("cupboardChef.userEmail") || "",
+  userId: readStoredValue("cupboardChef.userId"),
+  currentUserEmail: readStoredValue("cupboardChef.userEmail"),
   feedback: "",
   health: null,
 };
 
 function getUserId() {
-  return localStorage.getItem("cupboardChef.userId") || "";
+  return state.userId;
 }
 
 function setUserId(value) {
-  if (value) {
-    localStorage.setItem("cupboardChef.userId", value);
-  } else {
-    localStorage.removeItem("cupboardChef.userId");
+  state.userId = value || "";
+  const persisted = writeStoredValue("cupboardChef.userId", state.userId);
+  if (!persisted && state.userId) {
+    state.feedback = "Logged in, but this browser blocked local storage. Session will reset after refresh.";
   }
 }
 
 function setUserEmail(value) {
-  if (value) {
-    localStorage.setItem("cupboardChef.userEmail", value);
-  } else {
-    localStorage.removeItem("cupboardChef.userEmail");
+  state.currentUserEmail = value || "";
+  writeStoredValue("cupboardChef.userEmail", state.currentUserEmail);
+}
+
+function clearSession() {
+  state.userId = "";
+  state.currentUserEmail = "";
+  writeStoredValue("cupboardChef.userId", "");
+  writeStoredValue("cupboardChef.userEmail", "");
+}
+
+function getLoginErrorMessage(error) {
+  if (error instanceof ApiError) {
+    return error.message;
   }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return "Unable to log in.";
 }
 
 function setRouteFromHash() {
@@ -101,9 +137,7 @@ function renderLayout(content) {
   `;
 
   document.querySelector("#logout")?.addEventListener("click", () => {
-    setUserId("");
-    setUserEmail("");
-    state.currentUserEmail = "";
+    clearSession();
     state.feedback = "Logged out.";
     render();
   });
@@ -285,10 +319,11 @@ async function onSubmitLogin(event) {
     const response = await loginWithEmail({ email, password });
     setUserId(response.user_id);
     setUserEmail(response.email);
-    state.currentUserEmail = response.email;
-    state.feedback = `Logged in as ${response.email}.`;
+    if (!state.feedback) {
+      state.feedback = `Logged in as ${response.email}.`;
+    }
   } catch (error) {
-    state.feedback = error instanceof ApiError ? error.message : "Unable to log in.";
+    state.feedback = getLoginErrorMessage(error);
   }
 
   render();
