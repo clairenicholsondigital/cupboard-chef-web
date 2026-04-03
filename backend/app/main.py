@@ -1,8 +1,8 @@
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 import os
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -40,6 +40,103 @@ app.add_middleware(
 )
 
 
+# -------------------------------------------------------------------
+# Helpers
+# -------------------------------------------------------------------
+
+def server_error(detail: str) -> None:
+    raise HTTPException(status_code=500, detail=detail)
+
+
+def not_found(detail: str) -> None:
+    raise HTTPException(status_code=404, detail=detail)
+
+
+# -------------------------------------------------------------------
+# Pydantic models
+# -------------------------------------------------------------------
+
+class LoginRequest(BaseModel):
+    email: str = Field(..., min_length=3)
+    password: str = Field(..., min_length=1)
+
+
+class LoginResponse(BaseModel):
+    user_id: UUID
+    email: str
+
+
+class AppUserCreate(BaseModel):
+    email: str = Field(..., min_length=3)
+    display_name: Optional[str] = None
+    auth_user_id: Optional[UUID] = None
+
+
+class AppUserOut(BaseModel):
+    id: UUID
+    auth_user_id: Optional[UUID]
+    email: str
+    display_name: Optional[str]
+    created_at: Optional[str]
+    updated_at: Optional[str]
+
+
+class UserProfileUpsert(BaseModel):
+    app_theme: Optional[str] = None
+    preferred_meal_time_labels: Optional[Dict[str, str]] = None
+    onboarding_completed: Optional[bool] = None
+    timezone: Optional[str] = None
+    locale: Optional[str] = None
+
+
+class UserProfileOut(BaseModel):
+    id: UUID
+    user_id: UUID
+    app_theme: Optional[str]
+    preferred_meal_time_labels: Optional[Dict[str, str]]
+    onboarding_completed: Optional[bool]
+    timezone: Optional[str]
+    locale: Optional[str]
+    created_at: Optional[str]
+    updated_at: Optional[str]
+
+
+class IngredientCreate(BaseModel):
+    canonical_name: str = Field(..., min_length=1)
+    display_name: str = Field(..., min_length=1)
+    category: Optional[str] = None
+    is_seasonal: bool = False
+    seasonal_months: Optional[List[int]] = None
+
+
+class IngredientOut(BaseModel):
+    id: UUID
+    canonical_name: str
+    display_name: str
+    category: Optional[str]
+    is_seasonal: Optional[bool] = None
+    seasonal_months: Optional[List[int]] = None
+
+
+class TagCreate(BaseModel):
+    slug: str = Field(..., min_length=1)
+    label: str = Field(..., min_length=1)
+    description: Optional[str] = None
+    colour_hex: Optional[str] = None
+    is_system: bool = False
+    display_order: Optional[int] = None
+
+
+class TagOut(BaseModel):
+    id: UUID
+    slug: str
+    label: str
+    description: Optional[str]
+    colour_hex: Optional[str]
+    is_system: Optional[bool]
+    display_order: Optional[int]
+
+
 class FoodEntryCreate(BaseModel):
     user_id: UUID
     description: str = Field(..., min_length=1)
@@ -47,6 +144,16 @@ class FoodEntryCreate(BaseModel):
     input_method: str = "text"
     meal_time: Optional[str] = None
     rating: Optional[int] = Field(default=None, ge=1, le=5)
+    status: str = "logged"
+
+
+class FoodEntryUpdate(BaseModel):
+    description: Optional[str] = None
+    raw_input: Optional[str] = None
+    input_method: Optional[str] = None
+    meal_time: Optional[str] = None
+    rating: Optional[int] = Field(default=None, ge=1, le=5)
+    status: Optional[str] = None
 
 
 class FoodEntryOut(BaseModel):
@@ -60,27 +167,95 @@ class FoodEntryOut(BaseModel):
     rating: Optional[int]
 
 
-class IngredientOut(BaseModel):
-    id: UUID
-    canonical_name: str
-    display_name: str
-    category: Optional[str]
-
-
-class LoginRequest(BaseModel):
-    email: str = Field(..., min_length=3)
-    password: str = Field(..., min_length=1)
-
-
-class LoginResponse(BaseModel):
+class StorecupboardItemCreate(BaseModel):
     user_id: UUID
-    email: str
+    ingredient_id: UUID
+    quantity: Optional[float] = None
+    unit: Optional[str] = None
+    stock_status: str = "in_stock"
+    shelf_name: Optional[str] = None
 
+
+class StorecupboardItemUpdate(BaseModel):
+    quantity: Optional[float] = None
+    unit: Optional[str] = None
+    stock_status: Optional[str] = None
+    shelf_name: Optional[str] = None
+
+
+class StorecupboardItemOut(BaseModel):
+    id: UUID
+    user_id: UUID
+    ingredient_id: UUID
+    quantity: Optional[float]
+    unit: Optional[str]
+    stock_status: Optional[str]
+    shelf_name: Optional[str]
+    ingredient_display_name: Optional[str] = None
+    ingredient_canonical_name: Optional[str] = None
+
+
+class RecipeCreate(BaseModel):
+    title: str = Field(..., min_length=1)
+    description: Optional[str] = None
+    instructions: Optional[str] = None
+    source_url: Optional[str] = None
+    created_by_user_id: Optional[UUID] = None
+    is_system: bool = False
+
+
+class RecipeOut(BaseModel):
+    id: UUID
+    title: str
+    description: Optional[str]
+    instructions: Optional[str]
+    source_url: Optional[str]
+    created_by_user_id: Optional[UUID]
+    is_system: Optional[bool]
+
+
+class AISuggestionCreate(BaseModel):
+    user_id: UUID
+    suggestion_type: str
+    title: str = Field(..., min_length=1)
+    body: str = Field(..., min_length=1)
+
+
+class AISuggestionOut(BaseModel):
+    id: UUID
+    user_id: UUID
+    suggestion_type: str
+    title: str
+    body: str
+    created_at: Optional[str]
+
+
+class AppEventCreate(BaseModel):
+    user_id: Optional[UUID] = None
+    event_name: str = Field(..., min_length=1)
+    payload: Optional[Dict[str, Any]] = None
+
+
+class AppEventOut(BaseModel):
+    id: UUID
+    user_id: Optional[UUID]
+    event_name: str
+    payload: Optional[Dict[str, Any]]
+    created_at: Optional[str]
+
+
+# -------------------------------------------------------------------
+# Core routes
+# -------------------------------------------------------------------
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
+
+# -------------------------------------------------------------------
+# Auth
+# -------------------------------------------------------------------
 
 @app.post("/auth/login", response_model=LoginResponse)
 @app.post("/login", response_model=LoginResponse, include_in_schema=False)
@@ -118,10 +293,236 @@ def login(payload: LoginRequest):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     return {
-        "user_id": row[0],
+        "user_id": str(row[0]),
         "email": row[1],
     }
 
+
+# -------------------------------------------------------------------
+# Users
+# -------------------------------------------------------------------
+
+@app.post("/users", response_model=AppUserOut)
+def create_user(payload: AppUserCreate):
+    email = payload.email.strip().lower()
+
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    insert into app_users (auth_user_id, email, display_name)
+                    values (%s, %s, %s)
+                    returning id, auth_user_id, email, display_name, created_at::text, updated_at::text
+                    """,
+                    (
+                        str(payload.auth_user_id) if payload.auth_user_id else None,
+                        email,
+                        payload.display_name,
+                    ),
+                )
+                row = cur.fetchone()
+            conn.commit()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not create user.")
+
+    return {
+        "id": row[0],
+        "auth_user_id": row[1],
+        "email": row[2],
+        "display_name": row[3],
+        "created_at": row[4],
+        "updated_at": row[5],
+    }
+
+
+@app.get("/users/{user_id}", response_model=AppUserOut)
+def get_user(user_id: UUID):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    select id, auth_user_id, email, display_name, created_at::text, updated_at::text
+                    from app_users
+                    where id = %s
+                    """,
+                    (str(user_id),),
+                )
+                row = cur.fetchone()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not load user.")
+
+    if not row:
+        not_found("User not found.")
+
+    return {
+        "id": row[0],
+        "auth_user_id": row[1],
+        "email": row[2],
+        "display_name": row[3],
+        "created_at": row[4],
+        "updated_at": row[5],
+    }
+
+
+# -------------------------------------------------------------------
+# User profiles
+# -------------------------------------------------------------------
+
+@app.get("/users/{user_id}/profile", response_model=UserProfileOut)
+def get_user_profile(user_id: UUID):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    select
+                        id,
+                        user_id,
+                        app_theme,
+                        preferred_meal_time_labels,
+                        onboarding_completed,
+                        timezone,
+                        locale,
+                        created_at::text,
+                        updated_at::text
+                    from user_profiles
+                    where user_id = %s
+                    limit 1
+                    """,
+                    (str(user_id),),
+                )
+                row = cur.fetchone()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not load user profile.")
+
+    if not row:
+        not_found("User profile not found.")
+
+    return {
+        "id": row[0],
+        "user_id": row[1],
+        "app_theme": row[2],
+        "preferred_meal_time_labels": row[3],
+        "onboarding_completed": row[4],
+        "timezone": row[5],
+        "locale": row[6],
+        "created_at": row[7],
+        "updated_at": row[8],
+    }
+
+
+@app.put("/users/{user_id}/profile", response_model=UserProfileOut)
+def upsert_user_profile(user_id: UUID, payload: UserProfileUpsert):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    select id
+                    from user_profiles
+                    where user_id = %s
+                    limit 1
+                    """,
+                    (str(user_id),),
+                )
+                existing = cur.fetchone()
+
+                if existing:
+                    cur.execute(
+                        """
+                        update user_profiles
+                        set
+                            app_theme = %s,
+                            preferred_meal_time_labels = %s,
+                            onboarding_completed = %s,
+                            timezone = %s,
+                            locale = %s,
+                            updated_at = now()
+                        where user_id = %s
+                        returning
+                            id,
+                            user_id,
+                            app_theme,
+                            preferred_meal_time_labels,
+                            onboarding_completed,
+                            timezone,
+                            locale,
+                            created_at::text,
+                            updated_at::text
+                        """,
+                        (
+                            payload.app_theme,
+                            payload.preferred_meal_time_labels,
+                            payload.onboarding_completed,
+                            payload.timezone,
+                            payload.locale,
+                            str(user_id),
+                        ),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        insert into user_profiles (
+                            user_id,
+                            app_theme,
+                            preferred_meal_time_labels,
+                            onboarding_completed,
+                            timezone,
+                            locale
+                        )
+                        values (%s, %s, %s, %s, %s, %s)
+                        returning
+                            id,
+                            user_id,
+                            app_theme,
+                            preferred_meal_time_labels,
+                            onboarding_completed,
+                            timezone,
+                            locale,
+                            created_at::text,
+                            updated_at::text
+                        """,
+                        (
+                            str(user_id),
+                            payload.app_theme,
+                            payload.preferred_meal_time_labels,
+                            payload.onboarding_completed,
+                            payload.timezone,
+                            payload.locale,
+                        ),
+                    )
+
+                row = cur.fetchone()
+            conn.commit()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not save user profile.")
+
+    return {
+        "id": row[0],
+        "user_id": row[1],
+        "app_theme": row[2],
+        "preferred_meal_time_labels": row[3],
+        "onboarding_completed": row[4],
+        "timezone": row[5],
+        "locale": row[6],
+        "created_at": row[7],
+        "updated_at": row[8],
+    }
+
+
+# -------------------------------------------------------------------
+# Ingredients
+# -------------------------------------------------------------------
 
 @app.get("/ingredients", response_model=List[IngredientOut])
 def list_ingredients():
@@ -130,7 +531,13 @@ def list_ingredients():
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    select id, canonical_name, display_name, category
+                    select
+                        id,
+                        canonical_name,
+                        display_name,
+                        category,
+                        is_seasonal,
+                        seasonal_months
                     from ingredient_catalogue
                     order by display_name asc
                     """
@@ -139,10 +546,7 @@ def list_ingredients():
     except Exception as e:
         import traceback
         traceback.print_exc()
-        raise HTTPException(
-            status_code=500,
-            detail="Could not load ingredients.",
-        )
+        server_error("Could not load ingredients.")
 
     return [
         {
@@ -150,126 +554,22 @@ def list_ingredients():
             "canonical_name": row[1],
             "display_name": row[2],
             "category": row[3],
+            "is_seasonal": row[4],
+            "seasonal_months": row[5],
         }
         for row in rows
     ]
 
 
-@app.get("/food-entries", response_model=List[FoodEntryOut])
-def list_food_entries(user_id: Optional[UUID] = None):
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                if user_id:
-                    cur.execute(
-                        """
-                        select
-                            id,
-                            user_id,
-                            description,
-                            raw_input,
-                            input_method::text,
-                            meal_time::text,
-                            status::text,
-                            rating
-                        from food_entries
-                        where user_id = %s
-                        order by logged_at desc
-                        """,
-                        (str(user_id),),
-                    )
-                else:
-                    cur.execute(
-                        """
-                        select
-                            id,
-                            user_id,
-                            description,
-                            raw_input,
-                            input_method::text,
-                            meal_time::text,
-                            status::text,
-                            rating
-                        from food_entries
-                        order by logged_at desc
-                        """
-                    )
-                rows = cur.fetchall()
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=500,
-            detail="Could not load food entries.",
-        )
-
-    return [
-        {
-            "id": row[0],
-            "user_id": row[1],
-            "description": row[2],
-            "raw_input": row[3],
-            "input_method": row[4],
-            "meal_time": row[5],
-            "status": row[6],
-            "rating": row[7],
-        }
-        for row in rows
-    ]
-
-
-@app.post("/food-entries", response_model=FoodEntryOut)
-def create_food_entry(payload: FoodEntryCreate):
+@app.post("/ingredients", response_model=IngredientOut)
+def create_ingredient(payload: IngredientCreate):
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    insert into food_entries (
-                        user_id,
-                        description,
-                        raw_input,
-                        input_method,
-                        meal_time,
-                        rating
-                    )
-                    values (%s, %s, %s, %s::input_method, %s::meal_time_code, %s)
-                    returning
-                        id,
-                        user_id,
-                        description,
-                        raw_input,
-                        input_method::text,
-                        meal_time::text,
-                        status::text,
-                        rating
-                    """,
-                    (
-                        str(payload.user_id),
-                        payload.description,
-                        payload.raw_input,
-                        payload.input_method,
-                        payload.meal_time,
-                        payload.rating,
-                    ),
-                )
-                row = cur.fetchone()
-            conn.commit()
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=500,
-            detail="Could not create food entry.",
-        )
-
-    return {
-        "id": row[0],
-        "user_id": row[1],
-        "description": row[2],
-        "raw_input": row[3],
-        "input_method": row[4],
-        "meal_time": row[5],
-        "status": row[6],
-        "rating": row[7],
-    }
+                    insert into ingredient_catalogue (
+                        canonical_name,
+                        display_name,
+                        category,
+                        is
