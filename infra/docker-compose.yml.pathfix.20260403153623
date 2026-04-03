@@ -4,7 +4,7 @@ services:
     container_name: food-frontend
     restart: unless-stopped
     volumes:
-      - ../frontend:/usr/share/nginx/html:ro
+      - ./frontend:/usr/share/nginx/html:ro
     networks:
       - traefik_default
     labels:
@@ -17,16 +17,15 @@ services:
 
   food-api:
     build:
-      context: ../backend
+      context: ./backend
     container_name: food-api
     restart: unless-stopped
     ports:
       - "8001:8000"
     environment:
-      DATABASE_URL: "postgresql://helixscribe:Tennisandy23!@postgresql-ktbx-postgresql-1:5432/helixscribe"
+      DATABASE_URL: "postgresql://helixscribe:Tennisandy23!@postgresql:5432/helixscribe"
     networks:
       - traefik_default
-      - postgresql-ktbx_default
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.food-api.rule=Host(`api.food.helixscribe.cloud`)"
@@ -37,6 +36,4 @@ services:
 
 networks:
   traefik_default:
-    external: true
-  postgresql-ktbx_default:
     external: true

@@ -104,7 +104,9 @@ def login(payload: LoginRequest):
                     (email,),
                 )
                 row = cur.fetchone()
-    except Exception:
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(
             status_code=500,
             detail="Login failed because the API could not connect to the database.",
@@ -134,7 +136,9 @@ def list_ingredients():
                     """
                 )
                 rows = cur.fetchall()
-    except Exception:
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(
             status_code=500,
             detail="Could not load ingredients.",
@@ -191,7 +195,9 @@ def list_food_entries(user_id: Optional[UUID] = None):
                         """
                     )
                 rows = cur.fetchall()
-    except Exception:
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(
             status_code=500,
             detail="Could not load food entries.",
@@ -249,7 +255,9 @@ def create_food_entry(payload: FoodEntryCreate):
                 )
                 row = cur.fetchone()
             conn.commit()
-    except Exception:
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(
             status_code=500,
             detail="Could not create food entry.",

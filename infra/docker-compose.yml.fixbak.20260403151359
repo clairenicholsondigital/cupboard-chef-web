@@ -13,30 +13,31 @@ services:
       - "traefik.http.routers.food.entrypoints=websecure"
       - "traefik.http.routers.food.tls=true"
       - "traefik.http.routers.food.tls.certresolver=letsencrypt"
-      - "traefik.http.services.food.loadbalancer.server.port=80"
+      - "traefik.http.routers.food.service=food-service"
+      - "traefik.http.services.food-service.loadbalancer.server.port=80"
 
   food-api:
     build:
+    ports:
+      - "8001:8000"
       context: ../backend
     container_name: food-api
     restart: unless-stopped
-    ports:
-      - "8001:8000"
+    extra_hosts:
+      - "postgresql:host-gateway"
     environment:
-      DATABASE_URL: "postgresql://helixscribe:Tennisandy23!@postgresql-ktbx-postgresql-1:5432/helixscribe"
+      DATABASE_URL: "postgresql://helixscribe:Tennisandy23!@postgresql:5432/helixscribe"
     networks:
       - traefik_default
-      - postgresql-ktbx_default
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.food-api.rule=Host(`api.food.helixscribe.cloud`)"
       - "traefik.http.routers.food-api.entrypoints=websecure"
       - "traefik.http.routers.food-api.tls=true"
       - "traefik.http.routers.food-api.tls.certresolver=letsencrypt"
-      - "traefik.http.services.food-api.loadbalancer.server.port=8000"
+      - "traefik.http.routers.food-api.service=food-api-service"
+      - "traefik.http.services.food-api-service.loadbalancer.server.port=8000"
 
 networks:
   traefik_default:
-    external: true
-  postgresql-ktbx_default:
     external: true
