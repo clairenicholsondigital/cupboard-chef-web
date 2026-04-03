@@ -1,0 +1,21 @@
+services:
+  food-frontend:
+    image: nginx:alpine
+    container_name: food-frontend
+    restart: unless-stopped
+    volumes:
+      - ./index.html:/usr/share/nginx/html/index.html:ro
+    networks:
+      - traefik_default
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.food.rule=Host(`food.helixscribe.cloud`)"
+      - "traefik.http.routers.food.entrypoints=websecure"
+      - "traefik.http.routers.food.tls=true"
+      - "traefik.http.routers.food.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.food.service=food-service"
+      - "traefik.http.services.food-service.loadbalancer.server.port=80"
+
+networks:
+  traefik_default:
+    external: true
