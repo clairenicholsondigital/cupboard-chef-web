@@ -1,13 +1,19 @@
-import os
-from contextlib import contextmanager
 import psycopg
+from contextlib import contextmanager
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://cupboardchef:Tennis2!@127.0.0.1:5432/cupboardchef_db")
+
+DATABASE_URL = "postgresql://cupboardchef:Tennis2!@postgresql-pbtcx:5432/cupboardchef_db"
+
 
 @contextmanager
 def get_conn():
-    conn = psycopg.connect(DATABASE_URL)
+    conn = None
     try:
+        conn = psycopg.connect(DATABASE_URL)
         yield conn
+    except Exception as exc:
+        print(f"Database connection/query error: {exc}")
+        raise
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
