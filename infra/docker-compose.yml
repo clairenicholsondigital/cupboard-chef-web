@@ -4,7 +4,7 @@ services:
     container_name: food-frontend
     restart: unless-stopped
     volumes:
-      - ../frontend/index.html:/usr/share/nginx/html/index.html:ro
+      - ../frontend:/usr/share/nginx/html:ro
     networks:
       - traefik_default
     labels:
