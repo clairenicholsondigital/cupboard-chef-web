@@ -65,6 +65,7 @@ def health():
     return {"status": "ok"}
 
 @app.post("/auth/login", response_model=LoginResponse)
+@app.post("/login", response_model=LoginResponse, include_in_schema=False)
 def login(payload: LoginRequest):
     with get_conn() as conn:
         with conn.cursor() as cur:
