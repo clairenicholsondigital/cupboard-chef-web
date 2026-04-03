@@ -1,7 +1,12 @@
+import os
 import psycopg
 from contextlib import contextmanager
 
-DATABASE_URL = "postgresql://cupboardchef:Tennis2!@postgresql-ktbx-postgresql-1:5432/cupboardchef_db"
+# Use env var if available, fallback to working Docker hostname
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgresql://cupboardchef:Tennis2!@postgresql:5432/cupboardchef_db"
+)
 
 @contextmanager
 def get_conn():
