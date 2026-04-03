@@ -1,9 +1,10 @@
+from typing import List, Optional
+from uuid import UUID
+import os
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import Optional, List
-from uuid import UUID
-import os
 
 from app.db import get_conn
 
@@ -103,13 +104,13 @@ def login(payload: LoginRequest):
                     (email,),
                 )
                 row = cur.fetchone()
-    except Exception as exc:
+    except Exception:
         raise HTTPException(
             status_code=500,
-            detail=f"Login query failed: {exc}",
-        ) from exc
+            detail="Login failed because the API could not connect to the database.",
+        )
 
-    # Temporary auth behaviour:
+    # Temporary auth logic:
     # any non-empty password is accepted if the email exists in app_users.
     if not row:
         raise HTTPException(status_code=401, detail="Invalid email or password")
@@ -133,11 +134,11 @@ def list_ingredients():
                     """
                 )
                 rows = cur.fetchall()
-    except Exception as exc:
+    except Exception:
         raise HTTPException(
             status_code=500,
-            detail=f"Could not load ingredients: {exc}",
-        ) from exc
+            detail="Could not load ingredients.",
+        )
 
     return [
         {
@@ -190,11 +191,11 @@ def list_food_entries(user_id: Optional[UUID] = None):
                         """
                     )
                 rows = cur.fetchall()
-    except Exception as exc:
+    except Exception:
         raise HTTPException(
             status_code=500,
-            detail=f"Could not load food entries: {exc}",
-        ) from exc
+            detail="Could not load food entries.",
+        )
 
     return [
         {
@@ -248,11 +249,11 @@ def create_food_entry(payload: FoodEntryCreate):
                 )
                 row = cur.fetchone()
             conn.commit()
-    except Exception as exc:
+    except Exception:
         raise HTTPException(
             status_code=500,
-            detail=f"Could not create food entry: {exc}",
-        ) from exc
+            detail="Could not create food entry.",
+        )
 
     return {
         "id": row[0],
