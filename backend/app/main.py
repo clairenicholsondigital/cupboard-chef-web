@@ -1,4 +1,3 @@
-from datetime import date
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 import os
@@ -45,6 +44,7 @@ app.add_middleware(
 # Helpers
 # -------------------------------------------------------------------
 
+
 def server_error(detail: str) -> None:
     raise HTTPException(status_code=500, detail=detail)
 
@@ -56,6 +56,7 @@ def not_found(detail: str) -> None:
 # -------------------------------------------------------------------
 # Pydantic models
 # -------------------------------------------------------------------
+
 
 class LoginRequest(BaseModel):
     email: str = Field(..., min_length=3)
@@ -124,6 +125,13 @@ class IngredientOut(BaseModel):
     category: Optional[str]
     is_seasonal: Optional[bool] = None
     seasonal_months: Optional[List[int]] = None
+
+
+class IngredientListResponse(BaseModel):
+    items: List[IngredientOut]
+    total: int
+    limit: int
+    offset: int
 
 
 class JoinIngredientCreate(BaseModel):
@@ -211,17 +219,23 @@ class FoodEntryOut(BaseModel):
     rating: Optional[int]
 
 
-class NestedFoodEntryCreate(BaseModel):
-    description: str = Field(..., min_length=1)
-    raw_input: Optional[str] = None
-    input_method: str = "text"
-    meal_time: Optional[str] = None
-    rating: Optional[int] = Field(default=None, ge=1, le=5)
-    status: str = "logged"
+class FoodEntryListResponse(BaseModel):
+    items: List[FoodEntryOut]
+    total: int
+    limit: int
+    offset: int
 
 
 class StorecupboardItemCreate(BaseModel):
     user_id: UUID
+    ingredient_id: UUID
+    quantity: Optional[float] = None
+    unit: Optional[str] = None
+    stock_status: str = "in_stock"
+    shelf_name: Optional[str] = None
+
+
+class NestedStorecupboardItemCreate(BaseModel):
     ingredient_id: UUID
     quantity: Optional[float] = None
     unit: Optional[str] = None
@@ -248,12 +262,11 @@ class StorecupboardItemOut(BaseModel):
     ingredient_canonical_name: Optional[str] = None
 
 
-class NestedStorecupboardItemCreate(BaseModel):
-    ingredient_id: UUID
-    quantity: Optional[float] = None
-    unit: Optional[str] = None
-    stock_status: str = "in_stock"
-    shelf_name: Optional[str] = None
+class StorecupboardListResponse(BaseModel):
+    items: List[StorecupboardItemOut]
+    total: int
+    limit: int
+    offset: int
 
 
 class RecipeCreate(BaseModel):
@@ -284,8 +297,21 @@ class RecipeUpdate(BaseModel):
     is_system: Optional[bool] = None
 
 
+class RecipeListResponse(BaseModel):
+    items: List[RecipeOut]
+    total: int
+    limit: int
+    offset: int
+
+
 class AISuggestionCreate(BaseModel):
     user_id: UUID
+    suggestion_type: str
+    title: str = Field(..., min_length=1)
+    body: str = Field(..., min_length=1)
+
+
+class NestedAISuggestionCreate(BaseModel):
     suggestion_type: str
     title: str = Field(..., min_length=1)
     body: str = Field(..., min_length=1)
@@ -324,6 +350,7 @@ class AppEventOut(BaseModel):
 # Core routes
 # -------------------------------------------------------------------
 
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -333,19 +360,12 @@ def health():
 # Auth
 # -------------------------------------------------------------------
 
+
 def resolve_auth_subject(
     authorization: Optional[str] = Header(default=None),
     x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
     x_user_email: Optional[str] = Header(default=None, alias="X-User-Email"),
 ) -> Dict[str, str]:
-    """
-    Temporary authentication dependency.
-    Priority:
-    1. X-User-Id
-    2. X-User-Email
-    3. Authorization: Bearer <uuid_or_email>
-    TODO: replace with provider-verified JWT/session auth.
-    """
     if x_user_id:
         return {"kind": "id", "value": x_user_id.strip()}
 
@@ -391,7 +411,7 @@ def login(payload: LoginRequest):
                     (email,),
                 )
                 row = cur.fetchone()
-    except Exception as e:
+    except Exception:
         import traceback
         traceback.print_exc()
         raise HTTPException(
@@ -399,8 +419,6 @@ def login(payload: LoginRequest):
             detail="Login failed because the API could not connect to the database.",
         )
 
-    # Temporary auth logic:
-    # any non-empty password is accepted if the email exists in app_users.
     if not row:
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
@@ -454,31 +472,10 @@ def auth_me(auth_subject: Dict[str, str] = Depends(resolve_auth_subject)):
     }
 
 
-@app.post("/auth/logout")
-def auth_logout():
-    raise HTTPException(
-        status_code=501,
-        detail=(
-            "TODO: logout not implemented yet. "
-            "Requires auth provider session/token revocation integration."
-        ),
-    )
-
-
-@app.post("/auth/password/reset")
-def auth_password_reset():
-    raise HTTPException(
-        status_code=501,
-        detail=(
-            "TODO: password reset not implemented yet. "
-            "Requires auth provider reset/email delivery integration."
-        ),
-    )
-
-
 # -------------------------------------------------------------------
 # Users
 # -------------------------------------------------------------------
+
 
 @app.post("/users", response_model=AppUserOut)
 def create_user(payload: AppUserCreate):
@@ -501,7 +498,7 @@ def create_user(payload: AppUserCreate):
                 )
                 row = cur.fetchone()
             conn.commit()
-    except Exception as e:
+    except Exception:
         import traceback
         traceback.print_exc()
         server_error("Could not create user.")
@@ -530,7 +527,7 @@ def get_user(user_id: UUID):
                     (str(user_id),),
                 )
                 row = cur.fetchone()
-    except Exception as e:
+    except Exception:
         import traceback
         traceback.print_exc()
         server_error("Could not load user.")
@@ -551,6 +548,7 @@ def get_user(user_id: UUID):
 # -------------------------------------------------------------------
 # User profiles
 # -------------------------------------------------------------------
+
 
 @app.get("/users/{user_id}/profile", response_model=UserProfileOut)
 def get_user_profile(user_id: UUID):
@@ -576,7 +574,7 @@ def get_user_profile(user_id: UUID):
                     (str(user_id),),
                 )
                 row = cur.fetchone()
-    except Exception as e:
+    except Exception:
         import traceback
         traceback.print_exc()
         server_error("Could not load user profile.")
@@ -680,7 +678,7 @@ def upsert_user_profile(user_id: UUID, payload: UserProfileUpsert):
 
                 row = cur.fetchone()
             conn.commit()
-    except Exception as e:
+    except Exception:
         import traceback
         traceback.print_exc()
         server_error("Could not save user profile.")
@@ -701,6 +699,7 @@ def upsert_user_profile(user_id: UUID, payload: UserProfileUpsert):
 # -------------------------------------------------------------------
 # Ingredients
 # -------------------------------------------------------------------
+
 
 @app.get("/ingredients", response_model=IngredientListResponse)
 def list_ingredients(
@@ -735,6 +734,7 @@ def list_ingredients(
         params.append(is_seasonal)
 
     where_sql = f"where {' and '.join(where_clauses)}" if where_clauses else ""
+
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
@@ -747,6 +747,7 @@ def list_ingredients(
                     tuple(params),
                 )
                 total = cur.fetchone()[0]
+
                 cur.execute(
                     f"""
                     select
@@ -765,7 +766,7 @@ def list_ingredients(
                     tuple(params + [limit, offset]),
                 )
                 rows = cur.fetchall()
-    except Exception as e:
+    except Exception:
         import traceback
         traceback.print_exc()
         server_error("Could not load ingredients.")
@@ -821,7 +822,7 @@ def create_ingredient(payload: IngredientCreate):
                 )
                 row = cur.fetchone()
             conn.commit()
-    except Exception as e:
+    except Exception:
         import traceback
         traceback.print_exc()
         server_error("Could not create ingredient.")
@@ -837,209 +838,9 @@ def create_ingredient(payload: IngredientCreate):
 
 
 # -------------------------------------------------------------------
-# Recipes
-# -------------------------------------------------------------------
-
-@app.get("/recipes", response_model=RecipeListResponse)
-def list_recipes(
-    q: Optional[str] = Query(default=None, min_length=1),
-    created_by_user_id: Optional[UUID] = None,
-    is_system: Optional[bool] = None,
-    from_date: Optional[str] = Query(default=None, alias="from"),
-    to_date: Optional[str] = Query(default=None, alias="to"),
-    limit: int = Query(default=25, ge=1, le=100),
-    offset: int = Query(default=0, ge=0),
-    sort: str = Query(default="created_at"),
-    order: str = Query(default="desc"),
-):
-    sort_map = {
-        "title": "title",
-        "created_at": "created_at",
-        "updated_at": "updated_at",
-    }
-    sort_column = sort_map.get(sort, "created_at")
-    order_direction = "desc" if order.lower() == "desc" else "asc"
-    where_clauses = []
-    params: List[Any] = []
-
-    if q:
-        where_clauses.append("(title ILIKE %s OR coalesce(description, '') ILIKE %s)")
-        q_like = f"%{q.strip()}%"
-        params.extend([q_like, q_like])
-    if created_by_user_id:
-        where_clauses.append("created_by_user_id = %s")
-        params.append(str(created_by_user_id))
-    if is_system is not None:
-        where_clauses.append("is_system = %s")
-        params.append(is_system)
-    if from_date:
-        where_clauses.append("created_at >= %s::timestamptz")
-        params.append(from_date)
-    if to_date:
-        where_clauses.append("created_at <= %s::timestamptz")
-        params.append(to_date)
-
-    where_sql = f"where {' and '.join(where_clauses)}" if where_clauses else ""
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    f"""
-                    select count(*)
-                    from recipe_catalogue
-                    {where_sql}
-                    """,
-                    tuple(params),
-                )
-                total = cur.fetchone()[0]
-                cur.execute(
-                    f"""
-                    select
-                        id,
-                        title,
-                        description,
-                        instructions,
-                        source_url,
-                        created_by_user_id,
-                        is_system
-                    from recipe_catalogue
-                    {where_sql}
-                    order by {sort_column} {order_direction}, id asc
-                    limit %s
-                    offset %s
-                    """,
-                    tuple(params + [limit, offset]),
-                )
-                rows = cur.fetchall()
-    except Exception:
-        import traceback
-        traceback.print_exc()
-        server_error("Could not load recipes.")
-
-    return {
-        "items": [
-            {
-                "id": row[0],
-                "title": row[1],
-                "description": row[2],
-                "instructions": row[3],
-                "source_url": row[4],
-                "created_by_user_id": row[5],
-                "is_system": row[6],
-            }
-            for row in rows
-        ],
-        "total": total,
-        "limit": limit,
-        "offset": offset,
-    }
-
-
-# -------------------------------------------------------------------
-# Storecupboard
-# -------------------------------------------------------------------
-
-@app.get("/storecupboard", response_model=StorecupboardListResponse)
-def list_storecupboard_items(
-    user_id: UUID,
-    q: Optional[str] = Query(default=None, min_length=1),
-    stock_status: Optional[str] = None,
-    shelf_name: Optional[str] = None,
-    limit: int = Query(default=25, ge=1, le=100),
-    offset: int = Query(default=0, ge=0),
-    sort: str = Query(default="updated_at"),
-    order: str = Query(default="desc"),
-):
-    sort_map = {
-        "updated_at": "s.updated_at",
-        "created_at": "s.created_at",
-        "stock_status": "s.stock_status",
-        "ingredient": "i.display_name",
-        "quantity": "s.quantity",
-    }
-    sort_column = sort_map.get(sort, "s.updated_at")
-    order_direction = "desc" if order.lower() == "desc" else "asc"
-    where_clauses = ["s.user_id = %s"]
-    params: List[Any] = [str(user_id)]
-
-    if q:
-        where_clauses.append(
-            "(i.display_name ILIKE %s OR i.canonical_name ILIKE %s OR coalesce(s.shelf_name, '') ILIKE %s)"
-        )
-        q_like = f"%{q.strip()}%"
-        params.extend([q_like, q_like, q_like])
-    if stock_status:
-        where_clauses.append("s.stock_status::text = %s")
-        params.append(stock_status)
-    if shelf_name:
-        where_clauses.append("coalesce(s.shelf_name, '') ILIKE %s")
-        params.append(f"%{shelf_name.strip()}%")
-
-    where_sql = f"where {' and '.join(where_clauses)}"
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    f"""
-                    select count(*)
-                    from user_storecupboard_items s
-                    join ingredient_catalogue i on i.id = s.ingredient_id
-                    {where_sql}
-                    """,
-                    tuple(params),
-                )
-                total = cur.fetchone()[0]
-                cur.execute(
-                    f"""
-                    select
-                        s.id,
-                        s.user_id,
-                        s.ingredient_id,
-                        s.quantity,
-                        s.unit,
-                        s.stock_status::text,
-                        s.shelf_name,
-                        i.display_name,
-                        i.canonical_name
-                    from user_storecupboard_items s
-                    join ingredient_catalogue i on i.id = s.ingredient_id
-                    {where_sql}
-                    order by {sort_column} {order_direction}, s.id asc
-                    limit %s
-                    offset %s
-                    """,
-                    tuple(params + [limit, offset]),
-                )
-                rows = cur.fetchall()
-    except Exception:
-        import traceback
-        traceback.print_exc()
-        server_error("Could not load storecupboard items.")
-
-    return {
-        "items": [
-            {
-                "id": row[0],
-                "user_id": row[1],
-                "ingredient_id": row[2],
-                "quantity": row[3],
-                "unit": row[4],
-                "stock_status": row[5],
-                "shelf_name": row[6],
-                "ingredient_display_name": row[7],
-                "ingredient_canonical_name": row[8],
-            }
-            for row in rows
-        ],
-        "total": total,
-        "limit": limit,
-        "offset": offset,
-    }
-
-
-# -------------------------------------------------------------------
 # Food entries
 # -------------------------------------------------------------------
+
 
 @app.get("/food-entries", response_model=FoodEntryListResponse)
 def list_food_entries(
@@ -1087,6 +888,7 @@ def list_food_entries(
         params.append(to_date)
 
     where_sql = f"where {' and '.join(where_clauses)}" if where_clauses else ""
+
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
@@ -1099,6 +901,7 @@ def list_food_entries(
                     tuple(params),
                 )
                 total = cur.fetchone()[0]
+
                 cur.execute(
                     f"""
                     select
@@ -1144,15 +947,14 @@ def list_food_entries(
     }
 
 
-@app.get("/users/{user_id}/food-entries", response_model=List[FoodEntryOut])
-def list_user_food_entries(user_id: UUID):
+@app.post("/food-entries", response_model=FoodEntryOut)
+def create_food_entry(payload: FoodEntryCreate):
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    select
-                        id,
+                    insert into food_entries (
                         user_id,
                         description,
                         raw_input,
@@ -1173,13 +975,13 @@ def list_user_food_entries(user_id: UUID):
                         rating
                     """,
                     (
+                        str(payload.user_id),
                         payload.description,
                         payload.raw_input,
                         payload.input_method,
                         payload.meal_time,
                         payload.rating,
                         payload.status,
-                        str(food_entry_id),
                     ),
                 )
                 row = cur.fetchone()
@@ -1187,7 +989,106 @@ def list_user_food_entries(user_id: UUID):
     except Exception:
         import traceback
         traceback.print_exc()
-        server_error("Could not update food entry.")
+        server_error("Could not create food entry.")
+
+    return {
+        "id": row[0],
+        "user_id": row[1],
+        "description": row[2],
+        "raw_input": row[3],
+        "input_method": row[4],
+        "meal_time": row[5],
+        "status": row[6],
+        "rating": row[7],
+    }
+
+
+@app.get("/users/{user_id}/food-entries", response_model=List[FoodEntryOut])
+def list_user_food_entries(user_id: UUID):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    select
+                        id,
+                        user_id,
+                        description,
+                        raw_input,
+                        input_method::text,
+                        meal_time::text,
+                        status::text,
+                        rating
+                    from food_entries
+                    where user_id = %s
+                    order by created_at desc, id desc
+                    """,
+                    (str(user_id),),
+                )
+                rows = cur.fetchall()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not load user food entries.")
+
+    return [
+        {
+            "id": row[0],
+            "user_id": row[1],
+            "description": row[2],
+            "raw_input": row[3],
+            "input_method": row[4],
+            "meal_time": row[5],
+            "status": row[6],
+            "rating": row[7],
+        }
+        for row in rows
+    ]
+
+
+@app.post("/users/{user_id}/food-entries", response_model=FoodEntryOut)
+def create_user_food_entry(user_id: UUID, payload: UserFoodEntryCreate):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    insert into food_entries (
+                        user_id,
+                        description,
+                        raw_input,
+                        input_method,
+                        meal_time,
+                        rating,
+                        status
+                    )
+                    values (%s, %s, %s, %s::input_method, %s::meal_time_code, %s, %s::entry_status)
+                    returning
+                        id,
+                        user_id,
+                        description,
+                        raw_input,
+                        input_method::text,
+                        meal_time::text,
+                        status::text,
+                        rating
+                    """,
+                    (
+                        str(user_id),
+                        payload.description,
+                        payload.raw_input,
+                        payload.input_method,
+                        payload.meal_time,
+                        payload.rating,
+                        payload.status,
+                    ),
+                )
+                row = cur.fetchone()
+            conn.commit()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not create user food entry.")
 
     return {
         "id": row[0],
@@ -1330,8 +1231,319 @@ def delete_food_entry(entry_id: UUID):
 
 
 # -------------------------------------------------------------------
+# Storecupboard
+# -------------------------------------------------------------------
+
+
+@app.get("/storecupboard", response_model=StorecupboardListResponse)
+def list_storecupboard(
+    user_id: UUID,
+    q: Optional[str] = Query(default=None, min_length=1),
+    stock_status: Optional[str] = None,
+    shelf_name: Optional[str] = None,
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    sort: str = Query(default="updated_at"),
+    order: str = Query(default="desc"),
+):
+    sort_map = {
+        "updated_at": "s.updated_at",
+        "created_at": "s.created_at",
+        "stock_status": "s.stock_status",
+        "ingredient": "i.display_name",
+        "quantity": "s.quantity",
+    }
+    sort_column = sort_map.get(sort, "s.updated_at")
+    order_direction = "desc" if order.lower() == "desc" else "asc"
+    where_clauses = ["s.user_id = %s"]
+    params: List[Any] = [str(user_id)]
+
+    if q:
+        where_clauses.append(
+            "(i.display_name ILIKE %s OR i.canonical_name ILIKE %s OR coalesce(s.shelf_name, '') ILIKE %s)"
+        )
+        q_like = f"%{q.strip()}%"
+        params.extend([q_like, q_like, q_like])
+    if stock_status:
+        where_clauses.append("s.stock_status::text = %s")
+        params.append(stock_status)
+    if shelf_name:
+        where_clauses.append("coalesce(s.shelf_name, '') ILIKE %s")
+        params.append(f"%{shelf_name.strip()}%")
+
+    where_sql = f"where {' and '.join(where_clauses)}"
+
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    select count(*)
+                    from user_storecupboard_items s
+                    join ingredient_catalogue i on i.id = s.ingredient_id
+                    {where_sql}
+                    """,
+                    tuple(params),
+                )
+                total = cur.fetchone()[0]
+
+                cur.execute(
+                    f"""
+                    select
+                        s.id,
+                        s.user_id,
+                        s.ingredient_id,
+                        s.quantity,
+                        s.unit,
+                        s.stock_status::text,
+                        s.shelf_name,
+                        i.display_name,
+                        i.canonical_name
+                    from user_storecupboard_items s
+                    join ingredient_catalogue i on i.id = s.ingredient_id
+                    {where_sql}
+                    order by {sort_column} {order_direction}, s.id asc
+                    limit %s
+                    offset %s
+                    """,
+                    tuple(params + [limit, offset]),
+                )
+                rows = cur.fetchall()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not load storecupboard items.")
+
+    return {
+        "items": [
+            {
+                "id": row[0],
+                "user_id": row[1],
+                "ingredient_id": row[2],
+                "quantity": row[3],
+                "unit": row[4],
+                "stock_status": row[5],
+                "shelf_name": row[6],
+                "ingredient_display_name": row[7],
+                "ingredient_canonical_name": row[8],
+            }
+            for row in rows
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@app.get("/users/{user_id}/storecupboard", response_model=List[StorecupboardItemOut])
+def list_user_storecupboard_items(user_id: UUID):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    select
+                        s.id,
+                        s.user_id,
+                        s.ingredient_id,
+                        s.quantity::float8,
+                        s.unit,
+                        s.stock_status::text,
+                        s.shelf_name,
+                        i.display_name,
+                        i.canonical_name
+                    from user_storecupboard_items s
+                    join ingredient_catalogue i on i.id = s.ingredient_id
+                    where s.user_id = %s
+                    order by i.display_name asc, s.id asc
+                    """,
+                    (str(user_id),),
+                )
+                rows = cur.fetchall()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not load user storecupboard items.")
+
+    return [
+        {
+            "id": row[0],
+            "user_id": row[1],
+            "ingredient_id": row[2],
+            "quantity": row[3],
+            "unit": row[4],
+            "stock_status": row[5],
+            "shelf_name": row[6],
+            "ingredient_display_name": row[7],
+            "ingredient_canonical_name": row[8],
+        }
+        for row in rows
+    ]
+
+
+@app.post("/users/{user_id}/storecupboard", response_model=StorecupboardItemOut)
+def create_user_storecupboard_item(user_id: UUID, payload: NestedStorecupboardItemCreate):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    insert into user_storecupboard_items (
+                        user_id,
+                        ingredient_id,
+                        quantity,
+                        unit,
+                        stock_status,
+                        shelf_name
+                    )
+                    values (%s, %s, %s, %s, %s::stock_status, %s)
+                    returning
+                        id,
+                        user_id,
+                        ingredient_id,
+                        quantity::float8,
+                        unit,
+                        stock_status::text,
+                        shelf_name
+                    """,
+                    (
+                        str(user_id),
+                        str(payload.ingredient_id),
+                        payload.quantity,
+                        payload.unit,
+                        payload.stock_status,
+                        payload.shelf_name,
+                    ),
+                )
+                row = cur.fetchone()
+
+                cur.execute(
+                    """
+                    select display_name, canonical_name
+                    from ingredient_catalogue
+                    where id = %s
+                    """,
+                    (str(payload.ingredient_id),),
+                )
+                ingredient = cur.fetchone()
+            conn.commit()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not create user storecupboard item.")
+
+    return {
+        "id": row[0],
+        "user_id": row[1],
+        "ingredient_id": row[2],
+        "quantity": row[3],
+        "unit": row[4],
+        "stock_status": row[5],
+        "shelf_name": row[6],
+        "ingredient_display_name": ingredient[0] if ingredient else None,
+        "ingredient_canonical_name": ingredient[1] if ingredient else None,
+    }
+
+
+@app.put("/users/{user_id}/storecupboard/{item_id}", response_model=StorecupboardItemOut)
+def update_user_storecupboard_item(user_id: UUID, item_id: UUID, payload: StorecupboardItemUpdate):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    update user_storecupboard_items s
+                    set
+                        quantity = coalesce(%s, s.quantity),
+                        unit = coalesce(%s, s.unit),
+                        stock_status = coalesce(%s::stock_status, s.stock_status),
+                        shelf_name = coalesce(%s, s.shelf_name),
+                        updated_at = now()
+                    where s.id = %s and s.user_id = %s
+                    returning
+                        s.id,
+                        s.user_id,
+                        s.ingredient_id,
+                        s.quantity::float8,
+                        s.unit,
+                        s.stock_status::text,
+                        s.shelf_name
+                    """,
+                    (
+                        payload.quantity,
+                        payload.unit,
+                        payload.stock_status,
+                        payload.shelf_name,
+                        str(item_id),
+                        str(user_id),
+                    ),
+                )
+                row = cur.fetchone()
+
+                if row:
+                    cur.execute(
+                        """
+                        select display_name, canonical_name
+                        from ingredient_catalogue
+                        where id = %s
+                        """,
+                        (str(row[2]),),
+                    )
+                    ingredient = cur.fetchone()
+                else:
+                    ingredient = None
+            conn.commit()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not update user storecupboard item.")
+
+    if not row:
+        not_found("Storecupboard item not found.")
+
+    return {
+        "id": row[0],
+        "user_id": row[1],
+        "ingredient_id": row[2],
+        "quantity": row[3],
+        "unit": row[4],
+        "stock_status": row[5],
+        "shelf_name": row[6],
+        "ingredient_display_name": ingredient[0] if ingredient else None,
+        "ingredient_canonical_name": ingredient[1] if ingredient else None,
+    }
+
+
+@app.delete("/users/{user_id}/storecupboard/{item_id}")
+def delete_user_storecupboard_item(user_id: UUID, item_id: UUID):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    delete from user_storecupboard_items
+                    where id = %s and user_id = %s
+                    returning id
+                    """,
+                    (str(item_id), str(user_id)),
+                )
+                row = cur.fetchone()
+            conn.commit()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not delete user storecupboard item.")
+
+    if not row:
+        not_found("Storecupboard item not found.")
+
+    return {"deleted": True, "id": row[0]}
+
+
+# -------------------------------------------------------------------
 # Tags
 # -------------------------------------------------------------------
+
 
 @app.get("/tags", response_model=List[TagOut])
 def list_tags():
@@ -1548,271 +1760,64 @@ def delete_tag(tag_id: UUID):
 
 
 # -------------------------------------------------------------------
-# Storecupboard items
+# Recipes
 # -------------------------------------------------------------------
 
-@app.get("/storecupboard-items", response_model=List[StorecupboardItemOut])
-def list_storecupboard_items(user_id: Optional[UUID] = None):
-    where_sql = "where s.user_id = %s" if user_id else ""
-    params = (str(user_id),) if user_id else ()
+
+@app.get("/recipes", response_model=RecipeListResponse)
+def list_recipes(
+    q: Optional[str] = Query(default=None, min_length=1),
+    created_by_user_id: Optional[UUID] = None,
+    is_system: Optional[bool] = None,
+    from_date: Optional[str] = Query(default=None, alias="from"),
+    to_date: Optional[str] = Query(default=None, alias="to"),
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    sort: str = Query(default="created_at"),
+    order: str = Query(default="desc"),
+):
+    sort_map = {
+        "title": "title",
+        "created_at": "created_at",
+        "updated_at": "updated_at",
+    }
+    sort_column = sort_map.get(sort, "created_at")
+    order_direction = "desc" if order.lower() == "desc" else "asc"
+    where_clauses = []
+    params: List[Any] = []
+
+    if q:
+        where_clauses.append("(title ILIKE %s OR coalesce(description, '') ILIKE %s)")
+        q_like = f"%{q.strip()}%"
+        params.extend([q_like, q_like])
+    if created_by_user_id:
+        where_clauses.append("created_by_user_id = %s")
+        params.append(str(created_by_user_id))
+    if is_system is not None:
+        where_clauses.append("is_system = %s")
+        params.append(is_system)
+    if from_date:
+        where_clauses.append("created_at >= %s::timestamptz")
+        params.append(from_date)
+    if to_date:
+        where_clauses.append("created_at <= %s::timestamptz")
+        params.append(to_date)
+
+    where_sql = f"where {' and '.join(where_clauses)}" if where_clauses else ""
 
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     f"""
-                    select
-                        s.id,
-                        s.user_id,
-                        s.ingredient_id,
-                        s.quantity::float8,
-                        s.unit,
-                        s.stock_status::text,
-                        s.shelf_name,
-                        i.display_name,
-                        i.canonical_name
-                    from user_storecupboard_items s
-                    join ingredient_catalogue i on i.id = s.ingredient_id
+                    select count(*)
+                    from recipe_catalogue
                     {where_sql}
-                    order by i.display_name asc
                     """,
-                    params,
+                    tuple(params),
                 )
-                rows = cur.fetchall()
-    except Exception:
-        import traceback
-        traceback.print_exc()
-        server_error("Could not load storecupboard items.")
+                total = cur.fetchone()[0]
 
-    return [
-        {
-            "id": row[0],
-            "user_id": row[1],
-            "ingredient_id": row[2],
-            "quantity": row[3],
-            "unit": row[4],
-            "stock_status": row[5],
-            "shelf_name": row[6],
-            "ingredient_display_name": row[7],
-            "ingredient_canonical_name": row[8],
-        }
-        for row in rows
-    ]
-
-
-@app.post("/storecupboard-items", response_model=StorecupboardItemOut)
-def create_storecupboard_item(payload: StorecupboardItemCreate):
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    insert into user_storecupboard_items (
-                        user_id,
-                        ingredient_id,
-                        quantity,
-                        unit,
-                        stock_status,
-                        shelf_name
-                    )
-                    values (%s, %s, %s, %s, %s::stock_status, %s)
-                    returning
-                        id,
-                        user_id,
-                        ingredient_id,
-                        quantity::float8,
-                        unit,
-                        stock_status::text,
-                        shelf_name
-                    """,
-                    (
-                        str(payload.user_id),
-                        str(payload.ingredient_id),
-                        payload.quantity,
-                        payload.unit,
-                        payload.stock_status,
-                        payload.shelf_name,
-                    ),
-                )
-                row = cur.fetchone()
-                cur.execute(
-                    """
-                    select display_name, canonical_name
-                    from ingredient_catalogue
-                    where id = %s
-                    """,
-                    (str(payload.ingredient_id),),
-                )
-                ingredient = cur.fetchone()
-            conn.commit()
-    except Exception:
-        import traceback
-        traceback.print_exc()
-        server_error("Could not create storecupboard item.")
-
-    return {
-        "id": row[0],
-        "user_id": row[1],
-        "ingredient_id": row[2],
-        "quantity": row[3],
-        "unit": row[4],
-        "stock_status": row[5],
-        "shelf_name": row[6],
-        "ingredient_display_name": ingredient[0] if ingredient else None,
-        "ingredient_canonical_name": ingredient[1] if ingredient else None,
-    }
-
-
-@app.get("/storecupboard-items/{item_id}", response_model=StorecupboardItemOut)
-def get_storecupboard_item(item_id: UUID):
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    select
-                        s.id,
-                        s.user_id,
-                        s.ingredient_id,
-                        s.quantity::float8,
-                        s.unit,
-                        s.stock_status::text,
-                        s.shelf_name,
-                        i.display_name,
-                        i.canonical_name
-                    from user_storecupboard_items s
-                    join ingredient_catalogue i on i.id = s.ingredient_id
-                    where s.id = %s
-                    limit 1
-                    """,
-                    (str(item_id),),
-                )
-                row = cur.fetchone()
-    except Exception:
-        import traceback
-        traceback.print_exc()
-        server_error("Could not load storecupboard item.")
-
-    if not row:
-        not_found("Storecupboard item not found.")
-
-    return {
-        "id": row[0],
-        "user_id": row[1],
-        "ingredient_id": row[2],
-        "quantity": row[3],
-        "unit": row[4],
-        "stock_status": row[5],
-        "shelf_name": row[6],
-        "ingredient_display_name": row[7],
-        "ingredient_canonical_name": row[8],
-    }
-
-
-@app.put("/storecupboard-items/{item_id}", response_model=StorecupboardItemOut)
-def update_storecupboard_item(item_id: UUID, payload: StorecupboardItemUpdate):
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    update user_storecupboard_items s
-                    set
-                        quantity = coalesce(%s, s.quantity),
-                        unit = coalesce(%s, s.unit),
-                        stock_status = coalesce(%s::stock_status, s.stock_status),
-                        shelf_name = coalesce(%s, s.shelf_name),
-                        updated_at = now()
-                    where s.id = %s
-                    returning
-                        s.id,
-                        s.user_id,
-                        s.ingredient_id,
-                        s.quantity::float8,
-                        s.unit,
-                        s.stock_status::text,
-                        s.shelf_name
-                    """,
-                    (
-                        payload.quantity,
-                        payload.unit,
-                        payload.stock_status,
-                        payload.shelf_name,
-                        str(item_id),
-                    ),
-                )
-                row = cur.fetchone()
-                if row:
-                    cur.execute(
-                        """
-                        select display_name, canonical_name
-                        from ingredient_catalogue
-                        where id = %s
-                        """,
-                        (str(row[2]),),
-                    )
-                    ingredient = cur.fetchone()
-                else:
-                    ingredient = None
-            conn.commit()
-    except Exception:
-        import traceback
-        traceback.print_exc()
-        server_error("Could not update storecupboard item.")
-
-    if not row:
-        not_found("Storecupboard item not found.")
-
-    return {
-        "id": row[0],
-        "user_id": row[1],
-        "ingredient_id": row[2],
-        "quantity": row[3],
-        "unit": row[4],
-        "stock_status": row[5],
-        "shelf_name": row[6],
-        "ingredient_display_name": ingredient[0] if ingredient else None,
-        "ingredient_canonical_name": ingredient[1] if ingredient else None,
-    }
-
-
-@app.delete("/storecupboard-items/{item_id}")
-def delete_storecupboard_item(item_id: UUID):
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    delete from user_storecupboard_items
-                    where id = %s
-                    returning id
-                    """,
-                    (str(item_id),),
-                )
-                row = cur.fetchone()
-            conn.commit()
-    except Exception:
-        import traceback
-        traceback.print_exc()
-        server_error("Could not delete storecupboard item.")
-
-    if not row:
-        not_found("Storecupboard item not found.")
-
-    return {"deleted": True, "id": row[0]}
-
-
-# -------------------------------------------------------------------
-# Recipes
-# -------------------------------------------------------------------
-
-@app.get("/recipes", response_model=List[RecipeOut])
-def list_recipes(created_by_user_id: Optional[UUID] = None):
-    where_sql = "where created_by_user_id = %s" if created_by_user_id else ""
-    params = (str(created_by_user_id),) if created_by_user_id else ()
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
                 cur.execute(
                     f"""
                     select
@@ -1825,9 +1830,11 @@ def list_recipes(created_by_user_id: Optional[UUID] = None):
                         is_system
                     from recipe_catalogue
                     {where_sql}
-                    order by title asc
+                    order by {sort_column} {order_direction}, id asc
+                    limit %s
+                    offset %s
                     """,
-                    params,
+                    tuple(params + [limit, offset]),
                 )
                 rows = cur.fetchall()
     except Exception:
@@ -1835,18 +1842,23 @@ def list_recipes(created_by_user_id: Optional[UUID] = None):
         traceback.print_exc()
         server_error("Could not load recipes.")
 
-    return [
-        {
-            "id": row[0],
-            "title": row[1],
-            "description": row[2],
-            "instructions": row[3],
-            "source_url": row[4],
-            "created_by_user_id": row[5],
-            "is_system": row[6],
-        }
-        for row in rows
-    ]
+    return {
+        "items": [
+            {
+                "id": row[0],
+                "title": row[1],
+                "description": row[2],
+                "instructions": row[3],
+                "source_url": row[4],
+                "created_by_user_id": row[5],
+                "is_system": row[6],
+            }
+            for row in rows
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @app.post("/recipes", response_model=RecipeOut)
@@ -2029,10 +2041,12 @@ def delete_recipe(recipe_id: UUID):
 # AI suggestions
 # -------------------------------------------------------------------
 
+
 @app.get("/ai-suggestions", response_model=List[AISuggestionOut])
 def list_ai_suggestions(user_id: Optional[UUID] = None):
     where_sql = "where user_id = %s" if user_id else ""
     params = (str(user_id),) if user_id else ()
+
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
@@ -2070,8 +2084,13 @@ def list_ai_suggestions(user_id: Optional[UUID] = None):
     ]
 
 
-@app.post("/ai-suggestions", response_model=AISuggestionOut)
-def create_ai_suggestion(payload: AISuggestionCreate):
+@app.get("/users/{user_id}/ai-suggestions", response_model=List[AISuggestionOut])
+def list_user_ai_suggestions(user_id: UUID):
+    return list_ai_suggestions(user_id=user_id)
+
+
+@app.post("/users/{user_id}/ai-suggestions", response_model=AISuggestionOut)
+def create_user_ai_suggestion(user_id: UUID, payload: NestedAISuggestionCreate):
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
@@ -2093,7 +2112,7 @@ def create_ai_suggestion(payload: AISuggestionCreate):
                         created_at::text
                     """,
                     (
-                        str(payload.user_id),
+                        str(user_id),
                         payload.suggestion_type,
                         payload.title.strip(),
                         payload.body.strip(),
@@ -2104,7 +2123,7 @@ def create_ai_suggestion(payload: AISuggestionCreate):
     except Exception:
         import traceback
         traceback.print_exc()
-        server_error("Could not create AI suggestion.")
+        server_error("Could not create user AI suggestion.")
 
     return {
         "id": row[0],
@@ -2232,6 +2251,7 @@ def delete_ai_suggestion(suggestion_id: UUID):
 # -------------------------------------------------------------------
 # App events
 # -------------------------------------------------------------------
+
 
 @app.get("/app-events", response_model=List[AppEventOut])
 def list_app_events(user_id: Optional[UUID] = Query(default=None)):
