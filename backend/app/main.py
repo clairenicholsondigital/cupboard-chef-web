@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 import os
@@ -176,6 +177,15 @@ class FoodEntryOut(BaseModel):
     rating: Optional[int]
 
 
+class NestedFoodEntryCreate(BaseModel):
+    description: str = Field(..., min_length=1)
+    raw_input: Optional[str] = None
+    input_method: str = "text"
+    meal_time: Optional[str] = None
+    rating: Optional[int] = Field(default=None, ge=1, le=5)
+    status: str = "logged"
+
+
 class StorecupboardItemCreate(BaseModel):
     user_id: UUID
     ingredient_id: UUID
@@ -202,6 +212,14 @@ class StorecupboardItemOut(BaseModel):
     shelf_name: Optional[str]
     ingredient_display_name: Optional[str] = None
     ingredient_canonical_name: Optional[str] = None
+
+
+class NestedStorecupboardItemCreate(BaseModel):
+    ingredient_id: UUID
+    quantity: Optional[float] = None
+    unit: Optional[str] = None
+    stock_status: str = "in_stock"
+    shelf_name: Optional[str] = None
 
 
 class RecipeCreate(BaseModel):
