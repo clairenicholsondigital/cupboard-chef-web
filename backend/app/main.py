@@ -2,7 +2,7 @@ from typing import Any, Dict, List, Optional
 from uuid import UUID
 import os
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -139,6 +139,15 @@ class TagOut(BaseModel):
 
 class FoodEntryCreate(BaseModel):
     user_id: UUID
+    description: str = Field(..., min_length=1)
+    raw_input: Optional[str] = None
+    input_method: str = "text"
+    meal_time: Optional[str] = None
+    rating: Optional[int] = Field(default=None, ge=1, le=5)
+    status: str = "logged"
+
+
+class UserFoodEntryCreate(BaseModel):
     description: str = Field(..., min_length=1)
     raw_input: Optional[str] = None
     input_method: str = "text"
@@ -613,68 +622,20 @@ def create_ingredient(payload: IngredientCreate):
 # Food entries
 # -------------------------------------------------------------------
 
-@app.get("/food-entries", response_model=List[FoodEntryOut])
-def list_food_entries(user_id: Optional[UUID] = None):
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                if user_id:
-                    cur.execute(
-                        """
-                        select
-                            id,
-                            user_id,
-                            description,
-                            raw_input,
-                            input_method::text,
-                            meal_time::text,
-                            status::text,
-                            rating
-                        from food_entries
-                        where user_id = %s
-                        order by logged_at desc
-                        """,
-                        (str(user_id),),
-                    )
-                else:
-                    cur.execute(
-                        """
-                        select
-                            id,
-                            user_id,
-                            description,
-                            raw_input,
-                            input_method::text,
-                            meal_time::text,
-                            status::text,
-                            rating
-                        from food_entries
-                        order by logged_at desc
-                        """
-                    )
-                rows = cur.fetchall()
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        server_error("Could not load food entries.")
-
-    return [
-        {
-            "id": row[0],
-            "user_id": row[1],
-            "description": row[2],
-            "raw_input": row[3],
-            "input_method": row[4],
-            "meal_time": row[5],
-            "status": row[6],
-            "rating": row[7],
-        }
-        for row in rows
-    ]
+def _serialize_food_entry(row: Any) -> Dict[str, Any]:
+    return {
+        "id": row[0],
+        "user_id": row[1],
+        "description": row[2],
+        "raw_input": row[3],
+        "input_method": row[4],
+        "meal_time": row[5],
+        "status": row[6],
+        "rating": row[7],
+    }
 
 
-@app.post("/food-entries", response_model=FoodEntryOut)
-def create_food_entry(payload: FoodEntryCreate):
+def _insert_food_entry(user_id: UUID, payload: UserFoodEntryCreate) -> Dict[str, Any]:
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
@@ -701,7 +662,7 @@ def create_food_entry(payload: FoodEntryCreate):
                         rating
                     """,
                     (
-                        str(payload.user_id),
+                        str(user_id),
                         payload.description,
                         payload.raw_input,
                         payload.input_method,
@@ -712,18 +673,196 @@ def create_food_entry(payload: FoodEntryCreate):
                 )
                 row = cur.fetchone()
             conn.commit()
-    except Exception as e:
+    except Exception:
         import traceback
         traceback.print_exc()
         server_error("Could not create food entry.")
 
-    return {
-        "id": row[0],
-        "user_id": row[1],
-        "description": row[2],
-        "raw_input": row[3],
-        "input_method": row[4],
-        "meal_time": row[5],
-        "status": row[6],
-        "rating": row[7],
-    }
+    return _serialize_food_entry(row)
+
+
+@app.get("/food-entries", response_model=List[FoodEntryOut])
+def list_food_entries():
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    select
+                        id,
+                        user_id,
+                        description,
+                        raw_input,
+                        input_method::text,
+                        meal_time::text,
+                        status::text,
+                        rating
+                    from food_entries
+                    order by logged_at desc
+                    """
+                )
+                rows = cur.fetchall()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not load food entries.")
+
+    return [_serialize_food_entry(row) for row in rows]
+
+
+@app.get("/users/{user_id}/food-entries", response_model=List[FoodEntryOut])
+def list_user_food_entries(user_id: UUID):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    select
+                        id,
+                        user_id,
+                        description,
+                        raw_input,
+                        input_method::text,
+                        meal_time::text,
+                        status::text,
+                        rating
+                    from food_entries
+                    where user_id = %s
+                    order by logged_at desc
+                    """,
+                    (str(user_id),),
+                )
+                rows = cur.fetchall()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not load user food entries.")
+
+    return [_serialize_food_entry(row) for row in rows]
+
+
+@app.post("/users/{user_id}/food-entries", response_model=FoodEntryOut)
+def create_user_food_entry(user_id: UUID, payload: UserFoodEntryCreate):
+    return _insert_food_entry(user_id, payload)
+
+
+@app.post("/food-entries", response_model=FoodEntryOut, include_in_schema=False)
+def create_food_entry_legacy(payload: FoodEntryCreate):
+    return _insert_food_entry(payload.user_id, UserFoodEntryCreate(
+        description=payload.description,
+        raw_input=payload.raw_input,
+        input_method=payload.input_method,
+        meal_time=payload.meal_time,
+        rating=payload.rating,
+        status=payload.status,
+    ))
+
+
+@app.get("/food-entries/{food_entry_id}", response_model=FoodEntryOut)
+def get_food_entry(food_entry_id: UUID):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    select
+                        id,
+                        user_id,
+                        description,
+                        raw_input,
+                        input_method::text,
+                        meal_time::text,
+                        status::text,
+                        rating
+                    from food_entries
+                    where id = %s
+                    limit 1
+                    """,
+                    (str(food_entry_id),),
+                )
+                row = cur.fetchone()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not load food entry.")
+
+    if not row:
+        not_found("Food entry not found.")
+
+    return _serialize_food_entry(row)
+
+
+@app.patch("/food-entries/{food_entry_id}", response_model=FoodEntryOut)
+def update_food_entry(food_entry_id: UUID, payload: FoodEntryUpdate):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    update food_entries
+                    set
+                        description = coalesce(%s, description),
+                        raw_input = coalesce(%s, raw_input),
+                        input_method = coalesce(%s::input_method, input_method),
+                        meal_time = coalesce(%s::meal_time_code, meal_time),
+                        rating = coalesce(%s, rating),
+                        status = coalesce(%s::food_entry_status, status),
+                        updated_at = now()
+                    where id = %s
+                    returning
+                        id,
+                        user_id,
+                        description,
+                        raw_input,
+                        input_method::text,
+                        meal_time::text,
+                        status::text,
+                        rating
+                    """,
+                    (
+                        payload.description,
+                        payload.raw_input,
+                        payload.input_method,
+                        payload.meal_time,
+                        payload.rating,
+                        payload.status,
+                        str(food_entry_id),
+                    ),
+                )
+                row = cur.fetchone()
+            conn.commit()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not update food entry.")
+
+    if not row:
+        not_found("Food entry not found.")
+
+    return _serialize_food_entry(row)
+
+
+@app.delete("/food-entries/{food_entry_id}")
+def delete_food_entry(food_entry_id: UUID):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    delete from food_entries
+                    where id = %s
+                    returning id
+                    """,
+                    (str(food_entry_id),),
+                )
+                row = cur.fetchone()
+            conn.commit()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not delete food entry.")
+
+    if not row:
+        not_found("Food entry not found.")
+
+    return {"deleted": True, "id": str(row[0])}
