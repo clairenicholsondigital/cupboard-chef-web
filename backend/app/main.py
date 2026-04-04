@@ -572,4 +572,158 @@ def create_ingredient(payload: IngredientCreate):
                         canonical_name,
                         display_name,
                         category,
-                        is
+                        is_seasonal,
+                        seasonal_months
+                    )
+                    values (%s, %s, %s, %s, %s)
+                    returning
+                        id,
+                        canonical_name,
+                        display_name,
+                        category,
+                        is_seasonal,
+                        seasonal_months
+                    """,
+                    (
+                        payload.canonical_name.strip().lower(),
+                        payload.display_name.strip(),
+                        payload.category,
+                        payload.is_seasonal,
+                        payload.seasonal_months,
+                    ),
+                )
+                row = cur.fetchone()
+            conn.commit()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not create ingredient.")
+
+    return {
+        "id": row[0],
+        "canonical_name": row[1],
+        "display_name": row[2],
+        "category": row[3],
+        "is_seasonal": row[4],
+        "seasonal_months": row[5],
+    }
+
+
+# -------------------------------------------------------------------
+# Food entries
+# -------------------------------------------------------------------
+
+@app.get("/food-entries", response_model=List[FoodEntryOut])
+def list_food_entries(user_id: Optional[UUID] = None):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                if user_id:
+                    cur.execute(
+                        """
+                        select
+                            id,
+                            user_id,
+                            description,
+                            raw_input,
+                            input_method::text,
+                            meal_time::text,
+                            status::text,
+                            rating
+                        from food_entries
+                        where user_id = %s
+                        order by logged_at desc
+                        """,
+                        (str(user_id),),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        select
+                            id,
+                            user_id,
+                            description,
+                            raw_input,
+                            input_method::text,
+                            meal_time::text,
+                            status::text,
+                            rating
+                        from food_entries
+                        order by logged_at desc
+                        """
+                    )
+                rows = cur.fetchall()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not load food entries.")
+
+    return [
+        {
+            "id": row[0],
+            "user_id": row[1],
+            "description": row[2],
+            "raw_input": row[3],
+            "input_method": row[4],
+            "meal_time": row[5],
+            "status": row[6],
+            "rating": row[7],
+        }
+        for row in rows
+    ]
+
+
+@app.post("/food-entries", response_model=FoodEntryOut)
+def create_food_entry(payload: FoodEntryCreate):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    insert into food_entries (
+                        user_id,
+                        description,
+                        raw_input,
+                        input_method,
+                        meal_time,
+                        rating,
+                        status
+                    )
+                    values (%s, %s, %s, %s::input_method, %s::meal_time_code, %s, %s::food_entry_status)
+                    returning
+                        id,
+                        user_id,
+                        description,
+                        raw_input,
+                        input_method::text,
+                        meal_time::text,
+                        status::text,
+                        rating
+                    """,
+                    (
+                        str(payload.user_id),
+                        payload.description,
+                        payload.raw_input,
+                        payload.input_method,
+                        payload.meal_time,
+                        payload.rating,
+                        payload.status,
+                    ),
+                )
+                row = cur.fetchone()
+            conn.commit()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not create food entry.")
+
+    return {
+        "id": row[0],
+        "user_id": row[1],
+        "description": row[2],
+        "raw_input": row[3],
+        "input_method": row[4],
+        "meal_time": row[5],
+        "status": row[6],
+        "rating": row[7],
+    }
