@@ -1,9 +1,8 @@
 import {
   ApiError,
-  cupboardApiAvailable,
-  createFoodEntry,
+  createUserFoodEntry,
   getApiBaseUrl,
-  getFoodEntries,
+  getUserFoodEntries,
   getIngredients,
   healthCheck,
   loginWithEmail,
@@ -241,12 +240,8 @@ function renderEntries() {
 }
 
 function renderCupboard() {
-  const integrationMessage = cupboardApiAvailable()
-    ? "Cupboard API connected."
-    : "Cupboard endpoints are not available in backend/app/main.py yet. This view is scaffolded and ready for API hookup.";
-
   return card("Cupboard", `
-    <p>${integrationMessage}</p>
+    <p>Cupboard API connected.</p>
     <p class="meta">Planned fields: ingredient, quantity, unit, stock status, shelf name.</p>
   `);
 }
@@ -357,7 +352,7 @@ async function onSubmitFoodEntry(event) {
   try {
     state.feedback = "Saving food entry...";
     render();
-    await createFoodEntry(payload);
+    await createUserFoodEntry(userId, payload);
     state.foodForm = { description: "", raw_input: "", input_method: "text", meal_time: "", rating: "" };
     state.feedback = "Food entry saved.";
     await loadFoodEntries();
@@ -382,7 +377,7 @@ async function loadFoodEntries() {
   render();
 
   try {
-    state.foodEntries = await getFoodEntries(getUserId());
+    state.foodEntries = getUserId() ? await getUserFoodEntries(getUserId()) : [];
   } catch (error) {
     state.foodEntries = [];
     state.error = error instanceof ApiError ? error.message : "Could not load food entries.";
