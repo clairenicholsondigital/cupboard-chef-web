@@ -182,6 +182,15 @@ class FoodEntryCreate(BaseModel):
     status: str = "logged"
 
 
+class UserFoodEntryCreate(BaseModel):
+    description: str = Field(..., min_length=1)
+    raw_input: Optional[str] = None
+    input_method: str = "text"
+    meal_time: Optional[str] = None
+    rating: Optional[int] = Field(default=None, ge=1, le=5)
+    status: str = "logged"
+
+
 class FoodEntryUpdate(BaseModel):
     description: Optional[str] = None
     raw_input: Optional[str] = None
@@ -1110,7 +1119,7 @@ def list_food_entries(
                     tuple(params + [limit, offset]),
                 )
                 rows = cur.fetchall()
-    except Exception as e:
+    except Exception:
         import traceback
         traceback.print_exc()
         server_error("Could not load food entries.")
@@ -1135,14 +1144,15 @@ def list_food_entries(
     }
 
 
-@app.post("/food-entries", response_model=FoodEntryOut)
-def create_food_entry(payload: FoodEntryCreate):
+@app.get("/users/{user_id}/food-entries", response_model=List[FoodEntryOut])
+def list_user_food_entries(user_id: UUID):
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    insert into food_entries (
+                    select
+                        id,
                         user_id,
                         description,
                         raw_input,
@@ -1163,21 +1173,21 @@ def create_food_entry(payload: FoodEntryCreate):
                         rating
                     """,
                     (
-                        str(payload.user_id),
                         payload.description,
                         payload.raw_input,
                         payload.input_method,
                         payload.meal_time,
                         payload.rating,
                         payload.status,
+                        str(food_entry_id),
                     ),
                 )
                 row = cur.fetchone()
             conn.commit()
-    except Exception as e:
+    except Exception:
         import traceback
         traceback.print_exc()
-        server_error("Could not create food entry.")
+        server_error("Could not update food entry.")
 
     return {
         "id": row[0],
