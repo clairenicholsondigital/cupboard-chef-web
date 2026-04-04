@@ -119,6 +119,24 @@ class IngredientOut(BaseModel):
     seasonal_months: Optional[List[int]] = None
 
 
+class JoinIngredientCreate(BaseModel):
+    ingredient_id: UUID
+    quantity: Optional[float] = None
+    unit: Optional[str] = None
+
+
+class RecipeIngredientPatch(BaseModel):
+    quantity: Optional[float] = None
+    unit: Optional[str] = None
+
+
+class JoinIngredientOut(BaseModel):
+    id: UUID
+    ingredient_id: UUID
+    quantity: Optional[float] = None
+    unit: Optional[str] = None
+
+
 class TagCreate(BaseModel):
     slug: str = Field(..., min_length=1)
     label: str = Field(..., min_length=1)
