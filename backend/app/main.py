@@ -118,6 +118,24 @@ class IngredientOut(BaseModel):
     seasonal_months: Optional[List[int]] = None
 
 
+class JoinIngredientCreate(BaseModel):
+    ingredient_id: UUID
+    quantity: Optional[float] = None
+    unit: Optional[str] = None
+
+
+class RecipeIngredientPatch(BaseModel):
+    quantity: Optional[float] = None
+    unit: Optional[str] = None
+
+
+class JoinIngredientOut(BaseModel):
+    id: UUID
+    ingredient_id: UUID
+    quantity: Optional[float] = None
+    unit: Optional[str] = None
+
+
 class TagCreate(BaseModel):
     slug: str = Field(..., min_length=1)
     label: str = Field(..., min_length=1)
@@ -727,3 +745,362 @@ def create_food_entry(payload: FoodEntryCreate):
         "status": row[6],
         "rating": row[7],
     }
+
+
+def _entity_exists(cur: Any, table: str, entity_id: UUID) -> bool:
+    cur.execute(
+        f"select 1 from {table} where id = %s limit 1",
+        (str(entity_id),),
+    )
+    return cur.fetchone() is not None
+
+
+@app.get("/recipes/{recipe_id}/ingredients", response_model=List[JoinIngredientOut])
+def list_recipe_ingredients(recipe_id: UUID):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                if not _entity_exists(cur, "recipe_catalogue", recipe_id):
+                    not_found("Recipe not found.")
+
+                cur.execute(
+                    """
+                    select id, ingredient_id, quantity, unit
+                    from recipe_ingredients
+                    where recipe_id = %s
+                    order by created_at asc
+                    """,
+                    (str(recipe_id),),
+                )
+                rows = cur.fetchall()
+    except HTTPException:
+        raise
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not load recipe ingredients.")
+
+    return [
+        {
+            "id": row[0],
+            "ingredient_id": row[1],
+            "quantity": row[2],
+            "unit": row[3],
+        }
+        for row in rows
+    ]
+
+
+@app.post("/recipes/{recipe_id}/ingredients", response_model=JoinIngredientOut)
+def create_recipe_ingredient(recipe_id: UUID, payload: JoinIngredientCreate):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                if not _entity_exists(cur, "recipe_catalogue", recipe_id):
+                    not_found("Recipe not found.")
+                if not _entity_exists(cur, "ingredient_catalogue", payload.ingredient_id):
+                    not_found("Ingredient not found.")
+
+                cur.execute(
+                    """
+                    insert into recipe_ingredients (recipe_id, ingredient_id, quantity, unit)
+                    values (%s, %s, %s, %s)
+                    on conflict (recipe_id, ingredient_id)
+                    do update set
+                        quantity = excluded.quantity,
+                        unit = excluded.unit
+                    returning id, ingredient_id, quantity, unit
+                    """,
+                    (
+                        str(recipe_id),
+                        str(payload.ingredient_id),
+                        payload.quantity,
+                        payload.unit,
+                    ),
+                )
+                row = cur.fetchone()
+            conn.commit()
+    except HTTPException:
+        raise
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not save recipe ingredient.")
+
+    return {
+        "id": row[0],
+        "ingredient_id": row[1],
+        "quantity": row[2],
+        "unit": row[3],
+    }
+
+
+@app.patch("/recipes/{recipe_id}/ingredients/{ingredient_id}", response_model=JoinIngredientOut)
+def patch_recipe_ingredient(recipe_id: UUID, ingredient_id: UUID, payload: RecipeIngredientPatch):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                if not _entity_exists(cur, "recipe_catalogue", recipe_id):
+                    not_found("Recipe not found.")
+
+                cur.execute(
+                    """
+                    update recipe_ingredients
+                    set
+                        quantity = coalesce(%s, quantity),
+                        unit = coalesce(%s, unit)
+                    where recipe_id = %s and ingredient_id = %s
+                    returning id, ingredient_id, quantity, unit
+                    """,
+                    (
+                        payload.quantity,
+                        payload.unit,
+                        str(recipe_id),
+                        str(ingredient_id),
+                    ),
+                )
+                row = cur.fetchone()
+            conn.commit()
+    except HTTPException:
+        raise
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not update recipe ingredient.")
+
+    if not row:
+        not_found("Recipe ingredient not found.")
+
+    return {
+        "id": row[0],
+        "ingredient_id": row[1],
+        "quantity": row[2],
+        "unit": row[3],
+    }
+
+
+@app.delete("/recipes/{recipe_id}/ingredients/{ingredient_id}")
+def delete_recipe_ingredient(recipe_id: UUID, ingredient_id: UUID):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                if not _entity_exists(cur, "recipe_catalogue", recipe_id):
+                    not_found("Recipe not found.")
+
+                cur.execute(
+                    """
+                    delete from recipe_ingredients
+                    where recipe_id = %s and ingredient_id = %s
+                    returning id
+                    """,
+                    (str(recipe_id), str(ingredient_id)),
+                )
+                deleted = cur.fetchone()
+            conn.commit()
+    except HTTPException:
+        raise
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not delete recipe ingredient.")
+
+    if not deleted:
+        not_found("Recipe ingredient not found.")
+
+    return {"deleted": True}
+
+
+@app.get("/food-entries/{food_entry_id}/ingredients", response_model=List[JoinIngredientOut])
+def list_food_entry_ingredients(food_entry_id: UUID):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                if not _entity_exists(cur, "food_entries", food_entry_id):
+                    not_found("Food entry not found.")
+
+                cur.execute(
+                    """
+                    select id, ingredient_id, quantity, unit
+                    from food_entry_ingredients
+                    where food_entry_id = %s
+                    order by created_at asc
+                    """,
+                    (str(food_entry_id),),
+                )
+                rows = cur.fetchall()
+    except HTTPException:
+        raise
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not load food entry ingredients.")
+
+    return [
+        {
+            "id": row[0],
+            "ingredient_id": row[1],
+            "quantity": row[2],
+            "unit": row[3],
+        }
+        for row in rows
+    ]
+
+
+@app.post("/food-entries/{food_entry_id}/ingredients", response_model=JoinIngredientOut)
+def create_food_entry_ingredient(food_entry_id: UUID, payload: JoinIngredientCreate):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                if not _entity_exists(cur, "food_entries", food_entry_id):
+                    not_found("Food entry not found.")
+                if not _entity_exists(cur, "ingredient_catalogue", payload.ingredient_id):
+                    not_found("Ingredient not found.")
+
+                cur.execute(
+                    """
+                    select id from food_entry_ingredients
+                    where food_entry_id = %s and ingredient_id = %s
+                    limit 1
+                    """,
+                    (str(food_entry_id), str(payload.ingredient_id)),
+                )
+                existing = cur.fetchone()
+                if existing:
+                    raise HTTPException(status_code=409, detail="Food entry ingredient already exists.")
+
+                cur.execute(
+                    """
+                    insert into food_entry_ingredients (food_entry_id, ingredient_id, quantity, unit)
+                    values (%s, %s, %s, %s)
+                    returning id, ingredient_id, quantity, unit
+                    """,
+                    (
+                        str(food_entry_id),
+                        str(payload.ingredient_id),
+                        payload.quantity,
+                        payload.unit,
+                    ),
+                )
+                row = cur.fetchone()
+            conn.commit()
+    except HTTPException:
+        raise
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not create food entry ingredient.")
+
+    return {
+        "id": row[0],
+        "ingredient_id": row[1],
+        "quantity": row[2],
+        "unit": row[3],
+    }
+
+
+@app.delete("/food-entries/{food_entry_id}/ingredients/{ingredient_id}")
+def delete_food_entry_ingredient(food_entry_id: UUID, ingredient_id: UUID):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                if not _entity_exists(cur, "food_entries", food_entry_id):
+                    not_found("Food entry not found.")
+
+                cur.execute(
+                    """
+                    delete from food_entry_ingredients
+                    where food_entry_id = %s and ingredient_id = %s
+                    returning id
+                    """,
+                    (str(food_entry_id), str(ingredient_id)),
+                )
+                deleted = cur.fetchone()
+            conn.commit()
+    except HTTPException:
+        raise
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not delete food entry ingredient.")
+
+    if not deleted:
+        not_found("Food entry ingredient not found.")
+
+    return {"deleted": True}
+
+
+@app.post("/food-entries/{food_entry_id}/tags/{tag_id}")
+def add_food_entry_tag(food_entry_id: UUID, tag_id: UUID):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                if not _entity_exists(cur, "food_entries", food_entry_id):
+                    not_found("Food entry not found.")
+                if not _entity_exists(cur, "tag_definitions", tag_id):
+                    not_found("Tag not found.")
+
+                cur.execute(
+                    """
+                    insert into food_entry_tags (food_entry_id, tag_id)
+                    values (%s, %s)
+                    on conflict (food_entry_id, tag_id) do nothing
+                    returning id
+                    """,
+                    (str(food_entry_id), str(tag_id)),
+                )
+                inserted = cur.fetchone()
+
+                if inserted:
+                    link_id = inserted[0]
+                else:
+                    cur.execute(
+                        """
+                        select id
+                        from food_entry_tags
+                        where food_entry_id = %s and tag_id = %s
+                        limit 1
+                        """,
+                        (str(food_entry_id), str(tag_id)),
+                    )
+                    existing = cur.fetchone()
+                    link_id = existing[0]
+            conn.commit()
+    except HTTPException:
+        raise
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not attach tag to food entry.")
+
+    return {"id": link_id, "food_entry_id": food_entry_id, "tag_id": tag_id}
+
+
+@app.delete("/food-entries/{food_entry_id}/tags/{tag_id}")
+def remove_food_entry_tag(food_entry_id: UUID, tag_id: UUID):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                if not _entity_exists(cur, "food_entries", food_entry_id):
+                    not_found("Food entry not found.")
+
+                cur.execute(
+                    """
+                    delete from food_entry_tags
+                    where food_entry_id = %s and tag_id = %s
+                    returning id
+                    """,
+                    (str(food_entry_id), str(tag_id)),
+                )
+                deleted = cur.fetchone()
+            conn.commit()
+    except HTTPException:
+        raise
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not detach tag from food entry.")
+
+    if not deleted:
+        not_found("Food entry tag not found.")
+
+    return {"deleted": True}
