@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional
 from uuid import UUID
 import os
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -65,6 +65,13 @@ class LoginRequest(BaseModel):
 class LoginResponse(BaseModel):
     user_id: UUID
     email: str
+
+
+class AuthIdentity(BaseModel):
+    user_id: UUID
+    email: str
+    display_name: Optional[str] = None
+    profile_flags: Dict[str, bool]
 
 
 class AppUserCreate(BaseModel):
@@ -317,6 +324,42 @@ def health():
 # Auth
 # -------------------------------------------------------------------
 
+def resolve_auth_subject(
+    authorization: Optional[str] = Header(default=None),
+    x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+    x_user_email: Optional[str] = Header(default=None, alias="X-User-Email"),
+) -> Dict[str, str]:
+    """
+    Temporary authentication dependency.
+    Priority:
+    1. X-User-Id
+    2. X-User-Email
+    3. Authorization: Bearer <uuid_or_email>
+    TODO: replace with provider-verified JWT/session auth.
+    """
+    if x_user_id:
+        return {"kind": "id", "value": x_user_id.strip()}
+
+    if x_user_email:
+        return {"kind": "email", "value": x_user_email.strip().lower()}
+
+    if authorization:
+        scheme, _, token = authorization.partition(" ")
+        if scheme.lower() == "bearer" and token.strip():
+            subject = token.strip()
+            if "@" in subject:
+                return {"kind": "email", "value": subject.lower()}
+            return {"kind": "id", "value": subject}
+
+    raise HTTPException(
+        status_code=401,
+        detail=(
+            "Unauthorized. Provide X-User-Id, X-User-Email, or "
+            "Authorization: Bearer <user_id_or_email>."
+        ),
+    )
+
+
 @app.post("/auth/login", response_model=LoginResponse)
 @app.post("/login", response_model=LoginResponse, include_in_schema=False)
 def login(payload: LoginRequest):
@@ -356,6 +399,72 @@ def login(payload: LoginRequest):
         "user_id": str(row[0]),
         "email": row[1],
     }
+
+
+@app.get("/auth/me", response_model=AuthIdentity)
+def auth_me(auth_subject: Dict[str, str] = Depends(resolve_auth_subject)):
+    query = """
+        select
+            u.id,
+            u.email,
+            u.display_name,
+            p.id is not null as has_profile,
+            coalesce(p.onboarding_completed, false) as onboarding_completed
+        from app_users u
+        left join user_profiles p on p.user_id = u.id
+    """
+    params: tuple[str, ...]
+    if auth_subject["kind"] == "id":
+        query += " where u.id = %s limit 1"
+        params = (auth_subject["value"],)
+    else:
+        query += " where lower(u.email) = %s limit 1"
+        params = (auth_subject["value"],)
+
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, params)
+                row = cur.fetchone()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not resolve current user.")
+
+    if not row:
+        raise HTTPException(status_code=401, detail="Authenticated user was not found.")
+
+    return {
+        "user_id": row[0],
+        "email": row[1],
+        "display_name": row[2],
+        "profile_flags": {
+            "has_profile": bool(row[3]),
+            "onboarding_completed": bool(row[4]),
+        },
+    }
+
+
+@app.post("/auth/logout")
+def auth_logout():
+    raise HTTPException(
+        status_code=501,
+        detail=(
+            "TODO: logout not implemented yet. "
+            "Requires auth provider session/token revocation integration."
+        ),
+    )
+
+
+@app.post("/auth/password/reset")
+def auth_password_reset():
+    raise HTTPException(
+        status_code=501,
+        detail=(
+            "TODO: password reset not implemented yet. "
+            "Requires auth provider reset/email delivery integration."
+        ),
+    )
 
 
 # -------------------------------------------------------------------
