@@ -2,6 +2,30 @@ const DEFAULT_API_BASE_URL = "https://api.food.helixscribe.cloud";
 
 const trimTrailingSlash = (value) => value.replace(/\/+$/, "");
 
+const buildQueryString = (params = {}) => {
+  const search = new URLSearchParams();
+
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") {
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      value.forEach((item) => {
+        if (item !== undefined && item !== null && item !== "") {
+          search.append(key, String(item));
+        }
+      });
+      return;
+    }
+
+    search.append(key, String(value));
+  });
+
+  const query = search.toString();
+  return query ? `?${query}` : "";
+};
+
 export function getApiBaseUrl() {
   const configuredBaseUrl = window.CUPBOARD_CHEF_API_URL || localStorage.getItem("cupboardChef.apiBaseUrl");
   return trimTrailingSlash(configuredBaseUrl || DEFAULT_API_BASE_URL);
@@ -60,13 +84,101 @@ export function getIngredients() {
   return request("/ingredients", { method: "GET" });
 }
 
-export function getFoodEntries(userId) {
-  const query = userId ? `?user_id=${encodeURIComponent(userId)}` : "";
-  return request(`/food-entries${query}`, { method: "GET" });
+export function getFoodEntries(params = {}) {
+  return request(`/food-entries${buildQueryString(params)}`, { method: "GET" });
 }
 
 export function createFoodEntry(data) {
   return request("/food-entries", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function getUserFoodEntries(userId, params = {}) {
+  return request(`/users/${encodeURIComponent(userId)}/food-entries${buildQueryString(params)}`, {
+    method: "GET",
+  });
+}
+
+export function createUserFoodEntry(userId, data) {
+  return request(`/users/${encodeURIComponent(userId)}/food-entries`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function getUserStorecupboardItems(userId, params = {}) {
+  return request(`/users/${encodeURIComponent(userId)}/storecupboard${buildQueryString(params)}`, {
+    method: "GET",
+  });
+}
+
+export function createUserStorecupboardItem(userId, data) {
+  return request(`/users/${encodeURIComponent(userId)}/storecupboard`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function updateUserStorecupboardItem(userId, itemId, data) {
+  return request(`/users/${encodeURIComponent(userId)}/storecupboard/${encodeURIComponent(itemId)}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export function deleteUserStorecupboardItem(userId, itemId) {
+  return request(`/users/${encodeURIComponent(userId)}/storecupboard/${encodeURIComponent(itemId)}`, {
+    method: "DELETE",
+  });
+}
+
+export function getRecipes(params = {}) {
+  return request(`/recipes${buildQueryString(params)}`, { method: "GET" });
+}
+
+export function getRecipe(recipeId) {
+  return request(`/recipes/${encodeURIComponent(recipeId)}`, { method: "GET" });
+}
+
+export function createRecipe(data) {
+  return request("/recipes", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function updateRecipe(recipeId, data) {
+  return request(`/recipes/${encodeURIComponent(recipeId)}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export function deleteRecipe(recipeId) {
+  return request(`/recipes/${encodeURIComponent(recipeId)}`, { method: "DELETE" });
+}
+
+export function getTags(params = {}) {
+  return request(`/tags${buildQueryString(params)}`, { method: "GET" });
+}
+
+export function createTag(data) {
+  return request("/tags", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function getUserAiSuggestions(userId, params = {}) {
+  return request(`/users/${encodeURIComponent(userId)}/ai-suggestions${buildQueryString(params)}`, {
+    method: "GET",
+  });
+}
+
+export function createUserAiSuggestion(userId, data) {
+  return request(`/users/${encodeURIComponent(userId)}/ai-suggestions`, {
     method: "POST",
     body: JSON.stringify(data),
   });
@@ -85,10 +197,4 @@ export function loginWithEmail(data) {
     }
     throw error;
   });
-}
-
-// Backend routes for cupboard items are not available yet in backend/app/main.py.
-// These methods are intentionally left as explicit stubs so UI can show honest status.
-export function cupboardApiAvailable() {
-  return false;
 }
