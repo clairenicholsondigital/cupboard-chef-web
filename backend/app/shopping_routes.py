@@ -25,32 +25,42 @@ def not_found(detail: str):
     raise HTTPException(status_code=404, detail=detail)
 
 
-def _b64_urlsafe_decode(value: str) -> str:
+def _b64url_decode(value: str) -> bytes:
     padding = "=" * (-len(value) % 4)
-    return base64.urlsafe_b64decode(f"{value}{padding}".encode("utf-8")).decode("utf-8")
+    return base64.urlsafe_b64decode((value + padding).encode("utf-8"))
 
 
 def _verify_auth_token(token: str) -> Dict[str, Any]:
     try:
-        decoded = _b64_urlsafe_decode(token.strip())
-        user_id, email, expires_at, signature = decoded.split(":", 3)
+        token_value = token.strip()
+        signing_input, signature_segment = token_value.rsplit(".", 1)
+        expected_signature = hmac.new(
+            AUTH_TOKEN_SECRET.encode("utf-8"),
+            signing_input.encode("utf-8"),
+            hashlib.sha256,
+        ).digest()
+        provided_signature = _b64url_decode(signature_segment)
+        if not hmac.compare_digest(expected_signature, provided_signature):
+            raise ValueError("bad signature")
+
+        payload_segment = signing_input.split(".", 1)[1]
+        payload_bytes = _b64url_decode(payload_segment)
+        payload = __import__("json").loads(payload_bytes.decode("utf-8"))
+
+        if int(payload.get("exp", 0)) < int(time.time()):
+            raise ValueError("expired")
+
+        user_id = str(payload.get("sub") or "").strip()
+        email = str(payload.get("email") or "").strip().lower()
+        if not user_id or not email:
+            raise ValueError("missing claims")
+
+        return {
+            "user_id": user_id,
+            "email": email,
+        }
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid authentication token.")
-
-    payload = f"{user_id}:{email}:{expires_at}"
-    expected_signature = hmac.new(
-        AUTH_TOKEN_SECRET.encode("utf-8"),
-        payload.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
-
-    if not hmac.compare_digest(signature, expected_signature):
-        raise HTTPException(status_code=401, detail="Invalid authentication token.")
-
-    if int(expires_at) < int(time.time()):
-        raise HTTPException(status_code=401, detail="Authentication token has expired.")
-
-    return {"user_id": user_id, "email": email}
 
 
 def resolve_authenticated_user(
