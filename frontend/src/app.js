@@ -53,7 +53,6 @@ function render() {
   app.innerHTML = renderApp(state);
   attachEvents({ state, render, actions });
 }
-
 actions = createActions({
   state,
   render,
