@@ -220,6 +220,16 @@ export function createUserAiSuggestion(userId, data) {
   });
 }
 
+function getStoredAccessToken() {
+  return (
+    localStorage.getItem("cupboard_chef_access_token") ||
+    localStorage.getItem("access_token") ||
+    localStorage.getItem("auth_token") ||
+    localStorage.getItem("token") ||
+    ""
+  );
+}
+
 export function getCurrentUser(accessToken) {
   const token = accessToken || getStoredAccessToken();
   return request("/auth/me", {
