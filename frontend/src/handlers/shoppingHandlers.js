@@ -73,7 +73,6 @@ export async function handleSubmitShoppingListUpdate(event, deps) {
     ensureAuthenticated,
     updateShoppingList,
     loadShoppingListDetail,
-    loadShoppingLists,
     handlePossiblyStaleSession,
   } = deps;
 
@@ -105,7 +104,7 @@ export async function handleSubmitShoppingListUpdate(event, deps) {
     render();
     await updateShoppingList(state.selectedShoppingListId, payload);
     setFeedback("success", "Shopping list updated.");
-    await Promise.all([loadShoppingListDetail(state.selectedShoppingListId, false), loadShoppingLists(false)]);
+    await Promise.all([loadShoppingListDetail(state.selectedShoppingListId, false), deps.loadShoppingLists(false)]);
   } catch (error) {
     if (!handlePossiblyStaleSession(error)) {
       setFeedback("error", `Could not update shopping list: ${error.message}`);
