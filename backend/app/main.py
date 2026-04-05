@@ -1,6 +1,10 @@
 from typing import Any, Dict, List, Optional
 from uuid import UUID
+import base64
+import hashlib
+import hmac
 import os
+import time
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -53,6 +57,10 @@ def not_found(detail: str) -> None:
     raise HTTPException(status_code=404, detail=detail)
 
 
+AUTH_TOKEN_TTL_SECONDS = int(os.getenv("AUTH_TOKEN_TTL_SECONDS", "604800"))
+AUTH_TOKEN_SECRET = os.getenv("AUTH_TOKEN_SECRET", "dev-insecure-change-me")
+
+
 # -------------------------------------------------------------------
 # Pydantic models
 # -------------------------------------------------------------------
@@ -66,6 +74,8 @@ class LoginRequest(BaseModel):
 class LoginResponse(BaseModel):
     user_id: UUID
     email: str
+    access_token: str
+    token_type: str = "bearer"
 
 
 class AuthIdentity(BaseModel):
@@ -181,7 +191,6 @@ class TagUpdate(BaseModel):
 
 
 class FoodEntryCreate(BaseModel):
-    user_id: UUID
     description: str = Field(..., min_length=1)
     raw_input: Optional[str] = None
     input_method: str = "text"
@@ -227,7 +236,6 @@ class FoodEntryListResponse(BaseModel):
 
 
 class StorecupboardItemCreate(BaseModel):
-    user_id: UUID
     ingredient_id: UUID
     quantity: Optional[float] = None
     unit: Optional[str] = None
@@ -305,7 +313,6 @@ class RecipeListResponse(BaseModel):
 
 
 class AISuggestionCreate(BaseModel):
-    user_id: UUID
     suggestion_type: str
     title: str = Field(..., min_length=1)
     body: str = Field(..., min_length=1)
@@ -333,7 +340,6 @@ class AISuggestionUpdate(BaseModel):
 
 
 class AppEventCreate(BaseModel):
-    user_id: Optional[UUID] = None
     event_name: str = Field(..., min_length=1)
     payload: Optional[Dict[str, Any]] = None
 
@@ -361,32 +367,133 @@ def health():
 # -------------------------------------------------------------------
 
 
-def resolve_auth_subject(
-    authorization: Optional[str] = Header(default=None),
-    x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
-    x_user_email: Optional[str] = Header(default=None, alias="X-User-Email"),
-) -> Dict[str, str]:
-    if x_user_id:
-        return {"kind": "id", "value": x_user_id.strip()}
+def _b64_urlsafe_decode(value: str) -> str:
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode(f"{value}{padding}".encode("utf-8")).decode("utf-8")
 
-    if x_user_email:
-        return {"kind": "email", "value": x_user_email.strip().lower()}
 
-    if authorization:
-        scheme, _, token = authorization.partition(" ")
-        if scheme.lower() == "bearer" and token.strip():
-            subject = token.strip()
-            if "@" in subject:
-                return {"kind": "email", "value": subject.lower()}
-            return {"kind": "id", "value": subject}
+def _issue_auth_token(user_id: str, email: str) -> str:
+    issued_at = int(time.time())
+    expires_at = issued_at + AUTH_TOKEN_TTL_SECONDS
+    payload = f"{user_id}:{email}:{expires_at}"
+    signature = hmac.new(
+        AUTH_TOKEN_SECRET.encode("utf-8"),
+        payload.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    token_raw = f"{payload}:{signature}"
+    return base64.urlsafe_b64encode(token_raw.encode("utf-8")).decode("utf-8").rstrip("=")
 
-    raise HTTPException(
-        status_code=401,
-        detail=(
-            "Unauthorized. Provide X-User-Id, X-User-Email, or "
-            "Authorization: Bearer <user_id_or_email>."
-        ),
+
+def _verify_auth_token(token: str) -> Dict[str, str]:
+    try:
+        decoded = _b64_urlsafe_decode(token.strip())
+        user_id, email, expires_at, signature = decoded.split(":", 3)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid authentication token.")
+
+    payload = f"{user_id}:{email}:{expires_at}"
+    expected_signature = hmac.new(
+        AUTH_TOKEN_SECRET.encode("utf-8"),
+        payload.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+    if not hmac.compare_digest(signature, expected_signature):
+        raise HTTPException(status_code=401, detail="Invalid authentication token.")
+
+    if int(expires_at) < int(time.time()):
+        raise HTTPException(status_code=401, detail="Authentication token has expired.")
+
+    return {"user_id": user_id, "email": email}
+
+
+def _verify_password_for_user(cur: Any, email: str, password: str):
+    cur.execute(
+        """
+        select column_name
+        from information_schema.columns
+        where table_schema = current_schema()
+          and table_name = 'app_users'
+          and column_name in ('password_hash', 'password')
+        """
     )
+    columns = {row[0] for row in cur.fetchall()}
+
+    if "password_hash" in columns:
+        cur.execute(
+            """
+            select id, email
+            from app_users
+            where lower(email) = %s
+              and password_hash = crypt(%s, password_hash)
+            limit 1
+            """,
+            (email, password),
+        )
+        return cur.fetchone()
+
+    if "password" in columns:
+        cur.execute(
+            """
+            select id, email
+            from app_users
+            where lower(email) = %s
+              and password = %s
+            limit 1
+            """,
+            (email, password),
+        )
+        return cur.fetchone()
+
+    server_error(
+        "Password-based login is not configured for app_users. Add password_hash or password column."
+    )
+
+
+def resolve_authenticated_user(
+    authorization: Optional[str] = Header(default=None),
+) -> Dict[str, Any]:
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Unauthorized. Provide Authorization: Bearer <token>.")
+
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        raise HTTPException(status_code=401, detail="Unauthorized. Provide Authorization: Bearer <token>.")
+
+    auth_claims = _verify_auth_token(token.strip())
+
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    select id, email, display_name
+                    from app_users
+                    where id = %s and lower(email) = %s
+                    limit 1
+                    """,
+                    (auth_claims["user_id"], auth_claims["email"].lower()),
+                )
+                row = cur.fetchone()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not resolve authenticated user.")
+
+    if not row:
+        raise HTTPException(status_code=401, detail="Authenticated user was not found.")
+
+    return {
+        "user_id": row[0],
+        "email": row[1],
+        "display_name": row[2],
+    }
+
+
+def enforce_path_user(path_user_id: UUID, authenticated_user: Dict[str, Any]) -> None:
+    if str(path_user_id) != str(authenticated_user["user_id"]):
+        raise HTTPException(status_code=403, detail="Forbidden for requested user_id.")
 
 
 @app.post("/auth/login", response_model=LoginResponse)
@@ -401,16 +508,7 @@ def login(payload: LoginRequest):
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    select id, email
-                    from app_users
-                    where lower(email) = %s
-                    limit 1
-                    """,
-                    (email,),
-                )
-                row = cur.fetchone()
+                row = _verify_password_for_user(cur, email, password)
     except Exception:
         import traceback
         traceback.print_exc()
@@ -425,11 +523,13 @@ def login(payload: LoginRequest):
     return {
         "user_id": str(row[0]),
         "email": row[1],
+        "access_token": _issue_auth_token(str(row[0]), row[1].lower()),
+        "token_type": "bearer",
     }
 
 
 @app.get("/auth/me", response_model=AuthIdentity)
-def auth_me(auth_subject: Dict[str, str] = Depends(resolve_auth_subject)):
+def auth_me(authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user)):
     query = """
         select
             u.id,
@@ -439,14 +539,10 @@ def auth_me(auth_subject: Dict[str, str] = Depends(resolve_auth_subject)):
             coalesce(p.onboarding_completed, false) as onboarding_completed
         from app_users u
         left join user_profiles p on p.user_id = u.id
+        where u.id = %s
+        limit 1
     """
-    params: tuple[str, ...]
-    if auth_subject["kind"] == "id":
-        query += " where u.id = %s limit 1"
-        params = (auth_subject["value"],)
-    else:
-        query += " where lower(u.email) = %s limit 1"
-        params = (auth_subject["value"],)
+    params = (str(authenticated_user["user_id"]),)
 
     try:
         with get_conn() as conn:
@@ -514,7 +610,8 @@ def create_user(payload: AppUserCreate):
 
 
 @app.get("/users/{user_id}", response_model=AppUserOut)
-def get_user(user_id: UUID):
+def get_user(user_id: UUID, authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user)):
+    enforce_path_user(user_id, authenticated_user)
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
@@ -551,7 +648,8 @@ def get_user(user_id: UUID):
 
 
 @app.get("/users/{user_id}/profile", response_model=UserProfileOut)
-def get_user_profile(user_id: UUID):
+def get_user_profile(user_id: UUID, authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user)):
+    enforce_path_user(user_id, authenticated_user)
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
@@ -596,7 +694,12 @@ def get_user_profile(user_id: UUID):
 
 
 @app.put("/users/{user_id}/profile", response_model=UserProfileOut)
-def upsert_user_profile(user_id: UUID, payload: UserProfileUpsert):
+def upsert_user_profile(
+    user_id: UUID,
+    payload: UserProfileUpsert,
+    authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user),
+):
+    enforce_path_user(user_id, authenticated_user)
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
@@ -844,7 +947,7 @@ def create_ingredient(payload: IngredientCreate):
 
 @app.get("/food-entries", response_model=FoodEntryListResponse)
 def list_food_entries(
-    user_id: Optional[UUID] = None,
+    authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user),
     q: Optional[str] = Query(default=None, min_length=1),
     meal_time: Optional[str] = None,
     status: Optional[str] = None,
@@ -867,9 +970,8 @@ def list_food_entries(
     where_clauses = []
     params: List[Any] = []
 
-    if user_id:
-        where_clauses.append("user_id = %s")
-        params.append(str(user_id))
+    where_clauses.append("user_id = %s")
+    params.append(str(authenticated_user["user_id"]))
     if q:
         where_clauses.append("(description ILIKE %s OR coalesce(raw_input, '') ILIKE %s)")
         q_like = f"%{q.strip()}%"
@@ -948,7 +1050,10 @@ def list_food_entries(
 
 
 @app.post("/food-entries", response_model=FoodEntryOut)
-def create_food_entry(payload: FoodEntryCreate):
+def create_food_entry(
+    payload: FoodEntryCreate,
+    authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user),
+):
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
@@ -975,7 +1080,7 @@ def create_food_entry(payload: FoodEntryCreate):
                         rating
                     """,
                     (
-                        str(payload.user_id),
+                        str(authenticated_user["user_id"]),
                         payload.description,
                         payload.raw_input,
                         payload.input_method,
@@ -1004,7 +1109,11 @@ def create_food_entry(payload: FoodEntryCreate):
 
 
 @app.get("/users/{user_id}/food-entries", response_model=List[FoodEntryOut])
-def list_user_food_entries(user_id: UUID):
+def list_user_food_entries(
+    user_id: UUID,
+    authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user),
+):
+    enforce_path_user(user_id, authenticated_user)
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
@@ -1047,7 +1156,12 @@ def list_user_food_entries(user_id: UUID):
 
 
 @app.post("/users/{user_id}/food-entries", response_model=FoodEntryOut)
-def create_user_food_entry(user_id: UUID, payload: UserFoodEntryCreate):
+def create_user_food_entry(
+    user_id: UUID,
+    payload: UserFoodEntryCreate,
+    authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user),
+):
+    enforce_path_user(user_id, authenticated_user)
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
@@ -1103,7 +1217,7 @@ def create_user_food_entry(user_id: UUID, payload: UserFoodEntryCreate):
 
 
 @app.get("/food-entries/{entry_id}", response_model=FoodEntryOut)
-def get_food_entry(entry_id: UUID):
+def get_food_entry(entry_id: UUID, authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user)):
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
@@ -1119,10 +1233,10 @@ def get_food_entry(entry_id: UUID):
                         status::text,
                         rating
                     from food_entries
-                    where id = %s
+                    where id = %s and user_id = %s
                     limit 1
                     """,
-                    (str(entry_id),),
+                    (str(entry_id), str(authenticated_user["user_id"])),
                 )
                 row = cur.fetchone()
     except Exception:
@@ -1146,7 +1260,11 @@ def get_food_entry(entry_id: UUID):
 
 
 @app.put("/food-entries/{entry_id}", response_model=FoodEntryOut)
-def update_food_entry(entry_id: UUID, payload: FoodEntryUpdate):
+def update_food_entry(
+    entry_id: UUID,
+    payload: FoodEntryUpdate,
+    authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user),
+):
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
@@ -1161,7 +1279,7 @@ def update_food_entry(entry_id: UUID, payload: FoodEntryUpdate):
                         rating = coalesce(%s, rating),
                         status = coalesce(%s::entry_status, status),
                         updated_at = now()
-                    where id = %s
+                    where id = %s and user_id = %s
                     returning
                         id,
                         user_id,
@@ -1180,6 +1298,7 @@ def update_food_entry(entry_id: UUID, payload: FoodEntryUpdate):
                         payload.rating,
                         payload.status,
                         str(entry_id),
+                        str(authenticated_user["user_id"]),
                     ),
                 )
                 row = cur.fetchone()
@@ -1205,17 +1324,17 @@ def update_food_entry(entry_id: UUID, payload: FoodEntryUpdate):
 
 
 @app.delete("/food-entries/{entry_id}")
-def delete_food_entry(entry_id: UUID):
+def delete_food_entry(entry_id: UUID, authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user)):
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
                     delete from food_entries
-                    where id = %s
+                    where id = %s and user_id = %s
                     returning id
                     """,
-                    (str(entry_id),),
+                    (str(entry_id), str(authenticated_user["user_id"])),
                 )
                 row = cur.fetchone()
             conn.commit()
@@ -1237,7 +1356,7 @@ def delete_food_entry(entry_id: UUID):
 
 @app.get("/storecupboard", response_model=StorecupboardListResponse)
 def list_storecupboard(
-    user_id: UUID,
+    authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user),
     q: Optional[str] = Query(default=None, min_length=1),
     stock_status: Optional[str] = None,
     shelf_name: Optional[str] = None,
@@ -1256,7 +1375,7 @@ def list_storecupboard(
     sort_column = sort_map.get(sort, "s.updated_at")
     order_direction = "desc" if order.lower() == "desc" else "asc"
     where_clauses = ["s.user_id = %s"]
-    params: List[Any] = [str(user_id)]
+    params: List[Any] = [str(authenticated_user["user_id"])]
 
     if q:
         where_clauses.append(
@@ -1336,7 +1455,11 @@ def list_storecupboard(
 
 
 @app.get("/users/{user_id}/storecupboard", response_model=List[StorecupboardItemOut])
-def list_user_storecupboard_items(user_id: UUID):
+def list_user_storecupboard_items(
+    user_id: UUID,
+    authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user),
+):
+    enforce_path_user(user_id, authenticated_user)
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
@@ -1382,7 +1505,12 @@ def list_user_storecupboard_items(user_id: UUID):
 
 
 @app.post("/users/{user_id}/storecupboard", response_model=StorecupboardItemOut)
-def create_user_storecupboard_item(user_id: UUID, payload: NestedStorecupboardItemCreate):
+def create_user_storecupboard_item(
+    user_id: UUID,
+    payload: NestedStorecupboardItemCreate,
+    authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user),
+):
+    enforce_path_user(user_id, authenticated_user)
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
@@ -1446,7 +1574,13 @@ def create_user_storecupboard_item(user_id: UUID, payload: NestedStorecupboardIt
 
 
 @app.put("/users/{user_id}/storecupboard/{item_id}", response_model=StorecupboardItemOut)
-def update_user_storecupboard_item(user_id: UUID, item_id: UUID, payload: StorecupboardItemUpdate):
+def update_user_storecupboard_item(
+    user_id: UUID,
+    item_id: UUID,
+    payload: StorecupboardItemUpdate,
+    authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user),
+):
+    enforce_path_user(user_id, authenticated_user)
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
@@ -1515,7 +1649,12 @@ def update_user_storecupboard_item(user_id: UUID, item_id: UUID, payload: Storec
 
 
 @app.delete("/users/{user_id}/storecupboard/{item_id}")
-def delete_user_storecupboard_item(user_id: UUID, item_id: UUID):
+def delete_user_storecupboard_item(
+    user_id: UUID,
+    item_id: UUID,
+    authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user),
+):
+    enforce_path_user(user_id, authenticated_user)
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
@@ -2043,9 +2182,9 @@ def delete_recipe(recipe_id: UUID):
 
 
 @app.get("/ai-suggestions", response_model=List[AISuggestionOut])
-def list_ai_suggestions(user_id: Optional[UUID] = None):
-    where_sql = "where user_id = %s" if user_id else ""
-    params = (str(user_id),) if user_id else ()
+def list_ai_suggestions(authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user)):
+    where_sql = "where user_id = %s"
+    params = (str(authenticated_user["user_id"]),)
 
     try:
         with get_conn() as conn:
@@ -2085,12 +2224,21 @@ def list_ai_suggestions(user_id: Optional[UUID] = None):
 
 
 @app.get("/users/{user_id}/ai-suggestions", response_model=List[AISuggestionOut])
-def list_user_ai_suggestions(user_id: UUID):
-    return list_ai_suggestions(user_id=user_id)
+def list_user_ai_suggestions(
+    user_id: UUID,
+    authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user),
+):
+    enforce_path_user(user_id, authenticated_user)
+    return list_ai_suggestions(authenticated_user=authenticated_user)
 
 
 @app.post("/users/{user_id}/ai-suggestions", response_model=AISuggestionOut)
-def create_user_ai_suggestion(user_id: UUID, payload: NestedAISuggestionCreate):
+def create_user_ai_suggestion(
+    user_id: UUID,
+    payload: NestedAISuggestionCreate,
+    authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user),
+):
+    enforce_path_user(user_id, authenticated_user)
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
@@ -2136,7 +2284,10 @@ def create_user_ai_suggestion(user_id: UUID, payload: NestedAISuggestionCreate):
 
 
 @app.get("/ai-suggestions/{suggestion_id}", response_model=AISuggestionOut)
-def get_ai_suggestion(suggestion_id: UUID):
+def get_ai_suggestion(
+    suggestion_id: UUID,
+    authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user),
+):
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
@@ -2150,10 +2301,10 @@ def get_ai_suggestion(suggestion_id: UUID):
                         body,
                         created_at::text
                     from ai_suggestions
-                    where id = %s
+                    where id = %s and user_id = %s
                     limit 1
                     """,
-                    (str(suggestion_id),),
+                    (str(suggestion_id), str(authenticated_user["user_id"])),
                 )
                 row = cur.fetchone()
     except Exception:
@@ -2175,7 +2326,11 @@ def get_ai_suggestion(suggestion_id: UUID):
 
 
 @app.put("/ai-suggestions/{suggestion_id}", response_model=AISuggestionOut)
-def update_ai_suggestion(suggestion_id: UUID, payload: AISuggestionUpdate):
+def update_ai_suggestion(
+    suggestion_id: UUID,
+    payload: AISuggestionUpdate,
+    authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user),
+):
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
@@ -2186,7 +2341,7 @@ def update_ai_suggestion(suggestion_id: UUID, payload: AISuggestionUpdate):
                         suggestion_type = coalesce(%s::suggestion_type, suggestion_type),
                         title = coalesce(%s, title),
                         body = coalesce(%s, body)
-                    where id = %s
+                    where id = %s and user_id = %s
                     returning
                         id,
                         user_id,
@@ -2200,6 +2355,7 @@ def update_ai_suggestion(suggestion_id: UUID, payload: AISuggestionUpdate):
                         payload.title.strip() if payload.title else None,
                         payload.body.strip() if payload.body else None,
                         str(suggestion_id),
+                        str(authenticated_user["user_id"]),
                     ),
                 )
                 row = cur.fetchone()
@@ -2223,17 +2379,20 @@ def update_ai_suggestion(suggestion_id: UUID, payload: AISuggestionUpdate):
 
 
 @app.delete("/ai-suggestions/{suggestion_id}")
-def delete_ai_suggestion(suggestion_id: UUID):
+def delete_ai_suggestion(
+    suggestion_id: UUID,
+    authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user),
+):
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
                     delete from ai_suggestions
-                    where id = %s
+                    where id = %s and user_id = %s
                     returning id
                     """,
-                    (str(suggestion_id),),
+                    (str(suggestion_id), str(authenticated_user["user_id"])),
                 )
                 row = cur.fetchone()
             conn.commit()
@@ -2254,9 +2413,9 @@ def delete_ai_suggestion(suggestion_id: UUID):
 
 
 @app.get("/app-events", response_model=List[AppEventOut])
-def list_app_events(user_id: Optional[UUID] = Query(default=None)):
-    where_sql = "where user_id = %s" if user_id else ""
-    params = (str(user_id),) if user_id else ()
+def list_app_events(authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user)):
+    where_sql = "where user_id = %s"
+    params = (str(authenticated_user["user_id"]),)
 
     try:
         with get_conn() as conn:
@@ -2294,12 +2453,19 @@ def list_app_events(user_id: Optional[UUID] = Query(default=None)):
 
 
 @app.get("/users/{user_id}/app-events", response_model=List[AppEventOut])
-def list_user_app_events(user_id: UUID):
-    return list_app_events(user_id=user_id)
+def list_user_app_events(
+    user_id: UUID,
+    authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user),
+):
+    enforce_path_user(user_id, authenticated_user)
+    return list_app_events(authenticated_user=authenticated_user)
 
 
 @app.post("/app-events", response_model=AppEventOut)
-def create_app_event(payload: AppEventCreate):
+def create_app_event(
+    payload: AppEventCreate,
+    authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user),
+):
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
@@ -2319,7 +2485,7 @@ def create_app_event(payload: AppEventCreate):
                         created_at::text
                     """,
                     (
-                        str(payload.user_id) if payload.user_id else None,
+                        str(authenticated_user["user_id"]),
                         payload.event_name.strip(),
                         payload.payload,
                     ),
