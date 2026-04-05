@@ -48,7 +48,7 @@ export class ApiError extends Error {
 
 function getStoredAccessToken() {
   for (const key of AUTH_STORAGE_KEYS) {
-    const value = safeStorageGet(key);
+    const value = localStorage.getItem(key);
     if (value) {
       return value;
     }
@@ -56,19 +56,11 @@ function getStoredAccessToken() {
   return "";
 }
 
-function safeStorageGet(key) {
-  try {
-    return localStorage.getItem(key);
-  } catch {
-    return "";
-  }
-}
-
 async function request(path, options = {}) {
   const baseUrl = getApiBaseUrl();
-  const { auth, headers: optionHeaders, ...fetchOptions } = options;
+  const { auth, ...fetchOptions } = options;
   const storedToken = getStoredAccessToken();
-  const existingHeaders = optionHeaders || {};
+  const existingHeaders = fetchOptions.headers || {};
   const hasAuthorizationHeader =
     Object.prototype.hasOwnProperty.call(existingHeaders, "Authorization") ||
     Object.prototype.hasOwnProperty.call(existingHeaders, "authorization");
@@ -85,8 +77,8 @@ async function request(path, options = {}) {
   let response;
   try {
     response = await fetch(`${baseUrl}${path}`, {
-      ...fetchOptions,
       headers,
+      ...fetchOptions,
     });
   } catch (error) {
     throw new ApiError(
@@ -226,6 +218,16 @@ export function createUserAiSuggestion(userId, data) {
     method: "POST",
     body: JSON.stringify(data),
   });
+}
+
+function getStoredAccessToken() {
+  return (
+    localStorage.getItem("cupboard_chef_access_token") ||
+    localStorage.getItem("access_token") ||
+    localStorage.getItem("auth_token") ||
+    localStorage.getItem("token") ||
+    ""
+  );
 }
 
 export function getCurrentUser(accessToken) {

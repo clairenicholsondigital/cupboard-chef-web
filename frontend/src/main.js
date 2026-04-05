@@ -1008,7 +1008,4 @@ window.addEventListener("hashchange", async () => {
   render();
 });
 
-bootstrap().catch((error) => {
-  setFeedback("error", `App failed to load: ${error instanceof Error ? error.message : String(error)}`);
-  render();
-});
+bootstrap();
