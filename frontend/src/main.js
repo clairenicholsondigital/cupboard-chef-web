@@ -18,6 +18,20 @@ const mealTimeOptions = ["am", "breakfast", "lunch", "pm", "dinner", "evening", 
 const inputMethodOptions = ["text", "voice", "imported"];
 const stockStatusOptions = ["in_stock", "low", "out_of_stock"];
 
+// Use multiple keys so the frontend stays compatible with whichever key api.js is reading.
+const AUTH_STORAGE_KEYS = [
+  "cupboard_chef_access_token",
+  "access_token",
+  "auth_token",
+  "token",
+];
+
+const USER_STORAGE_KEYS = {
+  userId: "cupboard_chef_user_id",
+  email: "cupboard_chef_email",
+  displayName: "cupboard_chef_display_name",
+};
+
 const defaultFoodForm = () => ({
   description: "",
   raw_input: "",
@@ -78,6 +92,81 @@ function clearFeedback() {
 
 function currentUserId() {
   return state.currentUser?.user_id || "";
+}
+
+function getStoredAccessToken() {
+  for (const key of AUTH_STORAGE_KEYS) {
+    const value = localStorage.getItem(key);
+    if (value) {
+      return value;
+    }
+  }
+  return "";
+}
+
+function storeAccessToken(token) {
+  for (const key of AUTH_STORAGE_KEYS) {
+    localStorage.setItem(key, token);
+  }
+}
+
+function clearStoredAccessToken() {
+  for (const key of AUTH_STORAGE_KEYS) {
+    localStorage.removeItem(key);
+  }
+}
+
+function storeCurrentUser(user) {
+  if (!user) {
+    return;
+  }
+
+  localStorage.setItem(USER_STORAGE_KEYS.userId, user.user_id || "");
+  localStorage.setItem(USER_STORAGE_KEYS.email, user.email || "");
+  localStorage.setItem(USER_STORAGE_KEYS.displayName, user.display_name || "");
+}
+
+function clearStoredCurrentUser() {
+  localStorage.removeItem(USER_STORAGE_KEYS.userId);
+  localStorage.removeItem(USER_STORAGE_KEYS.email);
+  localStorage.removeItem(USER_STORAGE_KEYS.displayName);
+}
+
+function clearLocalSession() {
+  state.currentUser = null;
+  state.authSubject = "";
+  state.foodEntries = [];
+  state.cupboardItems = [];
+  state.cupboardLoaded = false;
+  state.cupboardLoading = false;
+  state.cupboardSubmitting = false;
+  state.cupboardError = "";
+  state.cupboardSuccess = "";
+  state.cupboardEditingId = "";
+  clearStoredAccessToken();
+  clearStoredCurrentUser();
+}
+
+function isAuthError(error) {
+  const message = error instanceof ApiError || error instanceof Error ? error.message : String(error || "");
+  const normalized = message.toLowerCase();
+
+  return (
+    normalized.includes("invalid authentication token") ||
+    normalized.includes("authentication token has expired") ||
+    normalized.includes("unauthorized") ||
+    normalized.includes("authenticated user was not found")
+  );
+}
+
+function handlePossiblyStaleSession(error) {
+  if (!isAuthError(error)) {
+    return false;
+  }
+
+  clearLocalSession();
+  setFeedback("error", "Your session expired or the saved token is no longer valid. Please sign in again.");
+  return true;
 }
 
 function ensureAuthenticated(actionLabel) {
@@ -149,24 +238,16 @@ function renderLayout(content) {
       <h2>Session</h2>
       <p class="meta">Current user UUID: <code>${escapeHtml(userId || "Not signed in")}</code></p>
       <p class="meta">Current email: <code>${escapeHtml(state.currentUser?.email || "Not signed in")}</code></p>
+      <p class="meta">Stored token: <code>${getStoredAccessToken() ? "Present" : "None"}</code></p>
       <button id="logout" type="button" ${!userId ? "disabled" : ""}>Log out</button>
       <p class="meta">API base URL: <code>${escapeHtml(getApiBaseUrl())}</code></p>
-      ${state.health ? `<p class="success">API health: ${escapeHtml(state.health.status)}</p>` : ""}
+      ${state.health ? `<p class="${state.health.status === "ok" ? "success" : "error"}">API health: ${escapeHtml(state.health.status)}</p>` : ""}
     </section>
     <main>${content}</main>
   `;
 
   document.querySelector("#logout")?.addEventListener("click", () => {
-    state.currentUser = null;
-    state.authSubject = "";
-    state.foodEntries = [];
-    state.cupboardItems = [];
-    state.cupboardLoaded = false;
-    state.cupboardLoading = false;
-    state.cupboardSubmitting = false;
-    state.cupboardError = "";
-    state.cupboardSuccess = "";
-    state.cupboardEditingId = "";
+    clearLocalSession();
     setFeedback("notice", "Signed out.");
     render();
   });
@@ -474,22 +555,31 @@ async function onSubmitLogin(event) {
     setFeedback("notice", "Signing in...");
     render();
 
-    const response = await loginWithEmail({ email, password });
-    const authSubject = response.email || response.user_id;
-    const identity = await getCurrentUser(authSubject);
+    clearStoredAccessToken();
 
-    state.authSubject = authSubject;
+    const response = await loginWithEmail({ email, password });
+
+    if (!response?.access_token) {
+      throw new Error("Login succeeded but no access token was returned.");
+    }
+
+    storeAccessToken(response.access_token);
+
+    const identity = await getCurrentUser(response.email || response.user_id);
+
+    state.authSubject = response.email || response.user_id || "";
     state.currentUser = {
       user_id: identity.user_id,
       email: identity.email,
       display_name: identity.display_name,
     };
 
+    storeCurrentUser(state.currentUser);
+
     setFeedback("success", `Signed in as ${identity.email}.`);
     await Promise.all([loadFoodEntries(false), loadCupboardItems(false)]);
   } catch (error) {
-    state.currentUser = null;
-    state.authSubject = "";
+    clearLocalSession();
     setFeedback("error", getLoginErrorMessage(error));
   } finally {
     state.loading = false;
@@ -537,7 +627,9 @@ async function onSubmitFoodEntry(event) {
     await loadFoodEntries(false);
     window.location.hash = "#/entries";
   } catch (error) {
-    setFeedback("error", `Could not save food entry: ${error.message}`);
+    if (!handlePossiblyStaleSession(error)) {
+      setFeedback("error", `Could not save food entry: ${error.message}`);
+    }
   } finally {
     state.loading = false;
     render();
@@ -589,8 +681,10 @@ async function onSubmitCupboardItem(event) {
     await loadCupboardItems(false);
     window.location.hash = "#/cupboard";
   } catch (error) {
-    state.cupboardError = `Could not add cupboard item: ${error.message}`;
-    setFeedback("error", `Could not add cupboard item: ${error.message}`);
+    if (!handlePossiblyStaleSession(error)) {
+      state.cupboardError = `Could not add cupboard item: ${error.message}`;
+      setFeedback("error", `Could not add cupboard item: ${error.message}`);
+    }
   } finally {
     state.cupboardSubmitting = false;
     render();
@@ -631,8 +725,10 @@ async function onSubmitCupboardUpdate(event) {
     setFeedback("success", "Cupboard item updated.");
     await loadCupboardItems(false);
   } catch (error) {
-    state.cupboardError = `Could not update cupboard item: ${error.message}`;
-    setFeedback("error", `Could not update cupboard item: ${error.message}`);
+    if (!handlePossiblyStaleSession(error)) {
+      state.cupboardError = `Could not update cupboard item: ${error.message}`;
+      setFeedback("error", `Could not update cupboard item: ${error.message}`);
+    }
   } finally {
     state.cupboardSubmitting = false;
     render();
@@ -664,8 +760,10 @@ async function onDeleteCupboardItem(event) {
     setFeedback("success", "Cupboard item deleted.");
     await loadCupboardItems(false);
   } catch (error) {
-    state.cupboardError = `Could not delete cupboard item: ${error.message}`;
-    setFeedback("error", `Could not delete cupboard item: ${error.message}`);
+    if (!handlePossiblyStaleSession(error)) {
+      state.cupboardError = `Could not delete cupboard item: ${error.message}`;
+      setFeedback("error", `Could not delete cupboard item: ${error.message}`);
+    }
   } finally {
     state.cupboardSubmitting = false;
     render();
@@ -726,7 +824,9 @@ async function onSubmitIngredient(event) {
     setFeedback("success", "Ingredient created.");
     await loadIngredients();
   } catch (error) {
-    setFeedback("error", `Could not create ingredient: ${error.message}`);
+    if (!handlePossiblyStaleSession(error)) {
+      setFeedback("error", `Could not create ingredient: ${error.message}`);
+    }
   } finally {
     state.loading = false;
     render();
@@ -756,7 +856,9 @@ async function loadFoodEntries(renderOnComplete = true) {
     state.foodEntries = await getUserFoodEntries(currentUserId());
   } catch (error) {
     state.foodEntries = [];
-    state.error = error instanceof ApiError ? error.message : "Could not load food entries.";
+    if (!handlePossiblyStaleSession(error)) {
+      state.error = error instanceof ApiError ? error.message : "Could not load food entries.";
+    }
   }
 
   if (renderOnComplete) {
@@ -802,14 +904,40 @@ async function loadCupboardItems(renderOnComplete = true) {
   } catch (error) {
     state.cupboardItems = [];
     state.cupboardLoaded = true;
-    state.cupboardError = `Could not load cupboard items: ${error.message}`;
-    setFeedback("error", state.cupboardError);
+
+    if (!handlePossiblyStaleSession(error)) {
+      state.cupboardError = `Could not load cupboard items: ${error.message}`;
+      setFeedback("error", state.cupboardError);
+    }
   }
 
   state.cupboardLoading = false;
 
   if (renderOnComplete) {
     render();
+  }
+}
+
+async function restoreSessionIfPossible() {
+  const token = getStoredAccessToken();
+  if (!token) {
+    return;
+  }
+
+  try {
+    const identity = await getCurrentUser();
+    state.authSubject = identity.email || identity.user_id || "";
+    state.currentUser = {
+      user_id: identity.user_id,
+      email: identity.email,
+      display_name: identity.display_name,
+    };
+    storeCurrentUser(state.currentUser);
+  } catch (error) {
+    clearLocalSession();
+    if (!isAuthError(error)) {
+      setFeedback("error", "Could not restore your session.");
+    }
   }
 }
 
@@ -832,6 +960,12 @@ function render() {
 async function bootstrap() {
   setRouteFromHash();
   await Promise.all([loadHealth(), loadIngredients()]);
+  await restoreSessionIfPossible();
+
+  if (currentUserId()) {
+    await Promise.all([loadFoodEntries(false), loadCupboardItems(false)]);
+  }
+
   render();
 }
 
