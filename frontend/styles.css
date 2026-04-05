@@ -274,6 +274,50 @@ button:hover,
   padding: 0.6rem;
 }
 
+.ingredient-list {
+  gap: 0.35rem;
+}
+
+.ingredient-list-item {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-soft);
+  overflow: hidden;
+}
+
+.ingredient-list-link {
+  min-height: 48px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.58rem 0.72rem;
+  text-decoration: none;
+  color: inherit;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.ingredient-list-link:hover {
+  background: #eef3fb;
+}
+
+.ingredient-list-link:active {
+  background: #e4ecfa;
+}
+
+.ingredient-list-name {
+  font-size: 0.95rem;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ingredient-list-chevron {
+  display: inline-flex;
+  color: var(--muted);
+}
+
 .cupboard-toolbar {
   position: sticky;
   top: 4.7rem;

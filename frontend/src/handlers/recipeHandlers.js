@@ -1,13 +1,17 @@
 function parseRecipeForm(formData) {
-  const createdByUserIdRaw = (formData.get("created_by_user_id") || "").toString().trim();
+  const hasCreatedByUserId = formData.has("created_by_user_id");
+  const hasSystemFlag = formData.has("is_system");
+  const createdByUserIdRaw = hasCreatedByUserId
+    ? (formData.get("created_by_user_id") || "").toString().trim()
+    : "";
 
   const payload = {
     title: (formData.get("title") || "").toString().trim(),
     description: (formData.get("description") || "").toString().trim(),
     instructions: (formData.get("instructions") || "").toString().trim(),
     source_url: (formData.get("source_url") || "").toString().trim(),
-    created_by_user_id: createdByUserIdRaw || null,
-    is_system: formData.get("is_system") === "on",
+    created_by_user_id: hasCreatedByUserId ? (createdByUserIdRaw || null) : null,
+    is_system: hasSystemFlag ? formData.get("is_system") === "on" : null,
   };
 
   return {
@@ -45,6 +49,7 @@ export async function handleSubmitRecipe(event, deps) {
   const formData = new FormData(event.target);
   const { payload } = parseRecipeForm(formData);
   payload.created_by_user_id = currentUserId() || null;
+  payload.is_system = false;
 
   state.recipeForm = {
     title: payload.title,
@@ -86,6 +91,7 @@ export async function handleSubmitRecipeUpdate(event, deps) {
     render,
     setFeedback,
     ensureAuthenticated,
+    currentUserId,
     updateRecipe,
     loadRecipeById,
     handlePossiblyStaleSession,
@@ -103,7 +109,8 @@ export async function handleSubmitRecipeUpdate(event, deps) {
   }
 
   const formData = new FormData(event.target);
-  const { payload, createdByUserIdRaw } = parseRecipeForm(formData);
+  const { payload } = parseRecipeForm(formData);
+  payload.created_by_user_id = currentUserId() || null;
 
   const validationError = recipePayloadIsInvalid({ payload });
   if (validationError) {
@@ -117,8 +124,8 @@ export async function handleSubmitRecipeUpdate(event, deps) {
     description: payload.description,
     instructions: payload.instructions,
     source_url: payload.source_url,
-    created_by_user_id: createdByUserIdRaw,
-    is_system: payload.is_system,
+    created_by_user_id: currentUserId() || "",
+    is_system: Boolean(state.recipeDetailForm?.is_system),
   };
 
   try {
