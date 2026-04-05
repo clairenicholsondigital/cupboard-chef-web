@@ -33,7 +33,7 @@ const buildQueryString = (params = {}) => {
 };
 
 export function getApiBaseUrl() {
-  const configuredBaseUrl = window.CUPBOARD_CHEF_API_URL || localStorage.getItem("cupboardChef.apiBaseUrl");
+  const configuredBaseUrl = window.CUPBOARD_CHEF_API_URL || safeStorageGet("cupboardChef.apiBaseUrl");
   return trimTrailingSlash(configuredBaseUrl || DEFAULT_API_BASE_URL);
 }
 
