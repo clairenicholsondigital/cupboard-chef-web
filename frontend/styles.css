@@ -279,7 +279,7 @@ button:hover,
   top: 4.7rem;
   z-index: 4;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  grid-template-columns: 1fr auto auto;
   gap: 0.45rem;
   margin-bottom: 0.35rem;
   padding: 0.35rem;
@@ -294,11 +294,6 @@ button:hover,
   padding: 0.55rem 0.62rem;
   border-radius: 10px;
   min-height: 42px;
-}
-
-#cupboard-sort,
-#cupboard-shelf-filter {
-  min-width: 130px;
 }
 
 .cupboard-add-button {

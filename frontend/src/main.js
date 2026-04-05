@@ -170,7 +170,6 @@ const state = {
   cupboardEditingId: "",
   cupboardQuery: "",
   cupboardSort: "shelf",
-  cupboardShelfFilter: "",
   feedback: { type: "", message: "" },
   health: null,
 };
@@ -420,20 +419,15 @@ function isExpiringSoon(value) {
 
 function getCupboardVisibleItems() {
   const query = state.cupboardQuery.trim().toLowerCase();
-  const shelfFilter = state.cupboardShelfFilter.trim().toLowerCase();
   const normalizedItems = [...state.cupboardItems];
 
-  const filteredByQuery = query
+  const filtered = query
     ? normalizedItems.filter((item) => {
       const name = item.ingredient_display_name || item.ingredient_canonical_name || item.ingredient_id || "";
       const shelf = item.shelf_name || "";
       return String(name).toLowerCase().includes(query) || String(shelf).toLowerCase().includes(query);
     })
     : normalizedItems;
-
-  const filtered = shelfFilter
-    ? filteredByQuery.filter((item) => String(item.shelf_name || "").toLowerCase() === shelfFilter)
-    : filteredByQuery;
 
   const alphabetical = (a, b) => {
     const aName = String(a.ingredient_display_name || a.ingredient_canonical_name || a.ingredient_id || "").toLowerCase();
@@ -714,10 +708,6 @@ function renderCupboard() {
         <option value="shelf" ${state.cupboardSort === "shelf" ? "selected" : ""}>Sort: Shelf</option>
         <option value="expiry" ${state.cupboardSort === "expiry" ? "selected" : ""}>Sort: Expiry</option>
         <option value="name" ${state.cupboardSort === "name" ? "selected" : ""}>Sort: Name</option>
-      </select>
-      <select id="cupboard-shelf-filter" aria-label="Filter cupboard by shelf">
-        <option value="">All shelves</option>
-        ${shelfOptions.map((shelfName) => `<option value="${escapeHtml(shelfName)}" ${state.cupboardShelfFilter === shelfName ? "selected" : ""}>Shelf: ${escapeHtml(shelfName)}</option>`).join("")}
       </select>
       <a class="button button-primary cupboard-add-button" href="#/add-cupboard-item">Add</a>
     </div>
@@ -1036,14 +1026,6 @@ function attachEvents() {
   if (cupboardSort) {
     cupboardSort.addEventListener("change", (event) => {
       state.cupboardSort = event.target.value;
-      render();
-    });
-  }
-
-  const cupboardShelfFilter = document.querySelector("#cupboard-shelf-filter");
-  if (cupboardShelfFilter) {
-    cupboardShelfFilter.addEventListener("change", (event) => {
-      state.cupboardShelfFilter = event.target.value;
       render();
     });
   }
