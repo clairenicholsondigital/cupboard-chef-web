@@ -73,6 +73,8 @@ const ROUTE_META = [
 const PRIMARY_TAB_ROUTES = ["dashboard", "ingredients", "cupboard", "recipes"];
 const PAGE_META = {
   dashboard: { title: "Dashboard", subtitle: "Track meals, cupboard stock, and recipes in one place." },
+  login: { title: "Login", subtitle: "Sign in to access your synced Cupboard Chef data." },
+  profile: { title: "Profile", subtitle: "View your current session and API connection status." },
   "log-food": { title: "Log food", subtitle: "Capture what you ate in seconds." },
   entries: { title: "Food entries", subtitle: "Review your recent meal logs." },
   cupboard: { title: "Cupboard", subtitle: "Keep your ingredients and stock levels up to date." },
@@ -325,6 +327,8 @@ function setRouteFromHash() {
     "/recipes": "recipes",
     "/add-recipe": "add-recipe",
     "/recipe-detail": "recipe-detail",
+    "/login": "login",
+    "/profile": "profile",
   };
 
   state.route = pathnameRouteMap[window.location.pathname] || "dashboard";
@@ -376,18 +380,12 @@ function renderLayout(content) {
           <button id="logout" type="button" class="button button-ghost" ${!userId ? "disabled" : ""}>Log out</button>
         </div>
         ${activePage.subtitle ? `<p class="app-subtitle">${escapeHtml(activePage.subtitle)}</p>` : ""}
+        <div class="actions">
+          <a class="button button-secondary" href="/login">Login page</a>
+          <a class="button button-secondary" href="/profile">Profile page</a>
+        </div>
       </header>
       <main class="screen-content">${content}</main>
-      <details class="debug-panel">
-        <summary>Session & API status</summary>
-        <div class="debug-content">
-          <p class="meta">Current user UUID: <code>${escapeHtml(userId || "Not signed in")}</code></p>
-          <p class="meta">Current email: <code>${escapeHtml(state.currentUser?.email || "Not signed in")}</code></p>
-          <p class="meta">Stored token: <code>${getStoredAccessToken() ? "Present" : "None"}</code></p>
-          <p class="meta">API base URL: <code>${escapeHtml(getApiBaseUrl())}</code></p>
-          ${state.health ? `<p class="${state.health.status === "ok" ? "success" : "error"}">API health: ${escapeHtml(state.health.status)}</p>` : ""}
-        </div>
-      </details>
     <nav class="bottom-tabs" aria-label="Bottom navigation tabs">
       ${primaryTabs.map((item) => navLink(item.route, item.label, item.icon, "tab")).join("")}
     </nav>
@@ -419,18 +417,6 @@ function renderDashboard() {
     : "<p class='empty'>No entries yet. Start by logging your first meal.</p>";
 
   return `
-    ${card("Sign in", `
-      <p class="meta">Authenticate with your account to enable syncing and editing.</p>
-      <form id="login-form" class="form-grid">
-        <label>Email address
-          <input name="email" type="email" value="${escapeHtml(state.authForm.email)}" autocomplete="email" required />
-        </label>
-        <label>Password
-          <input name="password" type="password" value="${escapeHtml(state.authForm.password)}" autocomplete="current-password" required />
-        </label>
-        <button type="submit" class="button button-primary button-block">${state.loading && !currentUserId() ? "Signing in..." : "Sign in"}</button>
-      </form>
-    `, "card-soft")}
     ${card("Quick actions", `
       <p class="meta">Move quickly between common tasks.</p>
       <div class="actions">
@@ -442,6 +428,32 @@ function renderDashboard() {
     `, "card-soft")}
     ${card("Recent food entries", previewHtml, "card-soft")}
   `;
+}
+
+function renderLogin() {
+  return card("Sign in", `
+    <p class="meta">Authenticate with your account to enable syncing and editing.</p>
+    <form id="login-form" class="form-grid">
+      <label>Email address
+        <input name="email" type="email" value="${escapeHtml(state.authForm.email)}" autocomplete="email" required />
+      </label>
+      <label>Password
+        <input name="password" type="password" value="${escapeHtml(state.authForm.password)}" autocomplete="current-password" required />
+      </label>
+      <button type="submit" class="button button-primary button-block">${state.loading && !currentUserId() ? "Signing in..." : "Sign in"}</button>
+    </form>
+  `, "card-soft");
+}
+
+function renderProfile() {
+  const userId = currentUserId();
+  return card("Session & API status", `
+    <p class="meta">Current user UUID: <code>${escapeHtml(userId || "Not signed in")}</code></p>
+    <p class="meta">Current email: <code>${escapeHtml(state.currentUser?.email || "Not signed in")}</code></p>
+    <p class="meta">Stored token: <code>${getStoredAccessToken() ? "Present" : "None"}</code></p>
+    <p class="meta">API base URL: <code>${escapeHtml(getApiBaseUrl())}</code></p>
+    ${state.health ? `<p class="${state.health.status === "ok" ? "success" : "error"}">API health: ${escapeHtml(state.health.status)}</p>` : ""}
+  `, "card-soft");
 }
 
 function renderFoodForm() {
@@ -1253,6 +1265,8 @@ function render() {
   let content = "";
 
   if (state.route === "dashboard") content = renderDashboard();
+  if (state.route === "login") content = renderLogin();
+  if (state.route === "profile") content = renderProfile();
   if (state.route === "log-food") content = renderFoodForm();
   if (state.route === "entries") content = renderEntries();
   if (state.route === "cupboard") content = renderCupboard();
