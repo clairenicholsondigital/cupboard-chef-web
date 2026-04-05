@@ -11,10 +11,13 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from app.recipe_routes import router as recipe_router
+from app.shopping_routes import router as shopping_router
 from app.db import get_conn
 
 
 app = FastAPI(title="Cupboard Chef API")
+app.include_router(recipe_router)
+app.include_router(shopping_router)
 
 
 DEFAULT_ALLOWED_ORIGINS = [
