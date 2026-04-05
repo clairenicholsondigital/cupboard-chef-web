@@ -11,11 +11,6 @@ export function handleCancelCupboardEdit(deps) {
   render();
 }
 
-export async function handleRefreshCupboard(deps) {
-  const { loadCupboardItems } = deps;
-  await loadCupboardItems();
-}
-
 export async function handleSubmitCupboardItem(event, deps) {
   const {
     state,
@@ -164,6 +159,11 @@ export async function handleDeleteCupboardItem(event, deps) {
   if (!itemId) {
     setFeedback("error", "Could not determine cupboard item ID.");
     render();
+    return;
+  }
+
+  const confirmed = window.confirm("Delete this cupboard item? This cannot be undone.");
+  if (!confirmed) {
     return;
   }
 
