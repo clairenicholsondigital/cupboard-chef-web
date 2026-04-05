@@ -42,10 +42,34 @@ import {
   handleSubmitRecipe,
   handleSubmitRecipeUpdate,
 } from "./handlers/recipeHandlers.js";
+import React from "https://esm.sh/react@18.3.1";
+import { renderToStaticMarkup } from "https://esm.sh/react-dom@18.3.1/server";
+import {
+  BookOpen,
+  ClipboardList,
+  CookingPot,
+  Home,
+  PlusCircle,
+  ScrollText,
+  Soup,
+  SquarePlus,
+  UtensilsCrossed,
+} from "https://esm.sh/lucide-react@0.469.0?deps=react@18.3.1";
 
 const mealTimeOptions = ["am", "breakfast", "lunch", "pm", "dinner", "evening", "snack", "late_night"];
 const inputMethodOptions = ["text", "voice", "imported"];
 const stockStatusOptions = ["in_stock", "low", "out_of_stock"];
+const ROUTE_META = [
+  { route: "dashboard", label: "Dashboard", icon: Home },
+  { route: "log-food", label: "Log food", icon: UtensilsCrossed },
+  { route: "entries", label: "Food entries", icon: ClipboardList },
+  { route: "cupboard", label: "Cupboard", icon: CookingPot },
+  { route: "add-cupboard-item", label: "Add cupboard item", icon: PlusCircle },
+  { route: "add-ingredient", label: "Add ingredient", icon: SquarePlus },
+  { route: "ingredients", label: "Ingredients list", icon: Soup },
+  { route: "recipes", label: "Recipes", icon: BookOpen },
+  { route: "add-recipe", label: "Add recipe", icon: ScrollText },
+];
 
 // Use multiple keys so the frontend stays compatible with whichever key api.js is reading.
 const AUTH_STORAGE_KEYS = [
@@ -302,20 +326,13 @@ function renderLayout(content) {
   const app = document.querySelector("#app");
   const userId = currentUserId();
   app.innerHTML = `
+    <div class="app-mobile-shell">
     <header class="header">
       <h1>Cupboard Chef</h1>
       <p>Food logging and cupboard tracking connected to your live API.</p>
     </header>
     <nav class="nav">
-      ${navLink("dashboard", "Dashboard")}
-      ${navLink("log-food", "Log food")}
-      ${navLink("entries", "Food entries")}
-      ${navLink("cupboard", "Cupboard")}
-      ${navLink("add-cupboard-item", "Add cupboard item")}
-      ${navLink("add-ingredient", "Add ingredient")}
-      ${navLink("ingredients", "Ingredients list")}
-      ${navLink("recipes", "Recipes")}
-      ${navLink("add-recipe", "Add recipe")}
+      ${ROUTE_META.map((item) => navLink(item.route, item.label, item.icon, "pill")).join("")}
     </nav>
     <section class="settings card">
       <h2>Session</h2>
@@ -327,6 +344,10 @@ function renderLayout(content) {
       ${state.health ? `<p class="${state.health.status === "ok" ? "success" : "error"}">API health: ${escapeHtml(state.health.status)}</p>` : ""}
     </section>
     <main>${content}</main>
+    <nav class="bottom-tabs" aria-label="Bottom navigation tabs">
+      ${ROUTE_META.map((item) => navLink(item.route, item.label, item.icon, "tab")).join("")}
+    </nav>
+    </div>
   `;
 
   document.querySelector("#logout")?.addEventListener("click", () => {
@@ -334,9 +355,10 @@ function renderLayout(content) {
   });
 }
 
-function navLink(route, label) {
+function navLink(route, label, Icon, style = "pill") {
   const active = state.route === route ? "active" : "";
-  return `<a class="${active}" href="#/${route}">${label}</a>`;
+  const icon = renderToStaticMarkup(React.createElement(Icon, { size: 16, strokeWidth: 2 }));
+  return `<a class="${style} ${active}" href="#/${route}" aria-label="${escapeHtml(label)}">${icon}<span>${label}</span></a>`;
 }
 
 function card(title, body) {
