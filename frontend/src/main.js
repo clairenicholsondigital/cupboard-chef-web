@@ -1,98 +1,88 @@
 import {
   ApiError,
-  createUserFoodEntry,
   createIngredient,
+  createUserFoodEntry,
+  createUserStorecupboardItem,
+  deleteUserStorecupboardItem,
   getApiBaseUrl,
-  getUserFoodEntries,
+  getCurrentUser,
   getIngredients,
+  getUserFoodEntries,
+  getUserStorecupboardItems,
   healthCheck,
   loginWithEmail,
+  updateUserStorecupboardItem,
 } from "./api.js";
 
 const mealTimeOptions = ["am", "breakfast", "lunch", "pm", "dinner", "evening", "snack", "late_night"];
 const inputMethodOptions = ["text", "voice", "imported"];
 const stockStatusOptions = ["in_stock", "low", "out_of_stock"];
 
-function readStoredValue(key) {
-  try {
-    return localStorage.getItem(key) || "";
-  } catch {
-    return "";
-  }
-}
+const defaultFoodForm = () => ({
+  description: "",
+  raw_input: "",
+  input_method: "text",
+  meal_time: "",
+  rating: "",
+});
 
-function writeStoredValue(key, value) {
-  try {
-    if (value) {
-      localStorage.setItem(key, value);
-    } else {
-      localStorage.removeItem(key);
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
+const defaultCupboardForm = () => ({
+  ingredient_id: "",
+  quantity: "",
+  unit: "",
+  stock_status: "in_stock",
+  shelf_name: "",
+});
+
+const defaultIngredientForm = () => ({
+  canonical_name: "",
+  display_name: "",
+  category: "veg",
+  is_seasonal: false,
+  seasonal_months: "",
+});
 
 const state = {
   route: "dashboard",
-  loading: false,
   error: "",
+  loading: false,
+  currentUser: null,
+  authSubject: "",
   foodEntries: [],
   ingredients: [],
-  foodForm: {
-    description: "",
-    raw_input: "",
-    input_method: "text",
-    meal_time: "",
-    rating: "",
-  },
-  cupboardForm: {
-    ingredient_id: "",
-    quantity: "",
-    unit: "",
-    stock_status: "in_stock",
-    shelf_name: "",
-  },
-  ingredientForm: {
-    canonical_name: "",
-    display_name: "",
-    category: "veg",
-    is_seasonal: false,
-    seasonal_months: "",
-  },
+  cupboardItems: [],
+  foodForm: defaultFoodForm(),
+  cupboardForm: defaultCupboardForm(),
+  ingredientForm: defaultIngredientForm(),
   authForm: {
     email: "",
     password: "",
   },
-  userId: readStoredValue("cupboardChef.userId"),
-  currentUserEmail: readStoredValue("cupboardChef.userEmail"),
-  feedback: "",
+  cupboardEditingId: "",
+  feedback: { type: "", message: "" },
   health: null,
 };
 
-function getUserId() {
-  return state.userId;
+function setFeedback(type, message) {
+  state.feedback = { type, message };
 }
 
-function setUserId(value) {
-  state.userId = value || "";
-  const persisted = writeStoredValue("cupboardChef.userId", state.userId);
-  if (!persisted && state.userId) {
-    state.feedback = "Logged in, but this browser blocked local storage. Session will reset after refresh.";
+function clearFeedback() {
+  state.feedback = { type: "", message: "" };
+}
+
+function currentUserId() {
+  return state.currentUser?.user_id || "";
+}
+
+function ensureAuthenticated(actionLabel) {
+  if (currentUserId()) {
+    return true;
   }
-}
 
-function setUserEmail(value) {
-  state.currentUserEmail = value || "";
-  writeStoredValue("cupboardChef.userEmail", state.currentUserEmail);
-}
-
-function clearSession() {
-  state.userId = "";
-  state.currentUserEmail = "";
-  writeStoredValue("cupboardChef.userId", "");
-  writeStoredValue("cupboardChef.userEmail", "");
+  setFeedback("error", `Please sign in before ${actionLabel}.`);
+  render();
+  return false;
 }
 
 function getLoginErrorMessage(error) {
@@ -102,7 +92,7 @@ function getLoginErrorMessage(error) {
   if (error instanceof Error) {
     return error.message;
   }
-  return "Unable to log in.";
+  return "Unable to sign in.";
 }
 
 function setRouteFromHash() {
@@ -136,6 +126,7 @@ function escapeHtml(value) {
 
 function renderLayout(content) {
   const app = document.querySelector("#app");
+  const userId = currentUserId();
   app.innerHTML = `
     <header class="header">
       <h1>Cupboard Chef</h1>
@@ -151,9 +142,9 @@ function renderLayout(content) {
     </nav>
     <section class="settings card">
       <h2>Session</h2>
-      <p class="meta">Current user UUID: <code>${escapeHtml(getUserId() || "Not logged in")}</code></p>
-      <p class="meta">Current email: <code>${escapeHtml(state.currentUserEmail || "Not logged in")}</code></p>
-      <button id="logout" type="button">Log out</button>
+      <p class="meta">Current user UUID: <code>${escapeHtml(userId || "Not signed in")}</code></p>
+      <p class="meta">Current email: <code>${escapeHtml(state.currentUser?.email || "Not signed in")}</code></p>
+      <button id="logout" type="button" ${!userId ? "disabled" : ""}>Log out</button>
       <p class="meta">API base URL: <code>${escapeHtml(getApiBaseUrl())}</code></p>
       ${state.health ? `<p class="success">API health: ${escapeHtml(state.health.status)}</p>` : ""}
     </section>
@@ -161,8 +152,12 @@ function renderLayout(content) {
   `;
 
   document.querySelector("#logout")?.addEventListener("click", () => {
-    clearSession();
-    state.feedback = "Logged out.";
+    state.currentUser = null;
+    state.authSubject = "";
+    state.foodEntries = [];
+    state.cupboardItems = [];
+    state.cupboardEditingId = "";
+    setFeedback("notice", "Signed out.");
     render();
   });
 }
@@ -185,8 +180,8 @@ function renderDashboard() {
     : "<p class='empty'>No entries yet. Start by logging your first meal.</p>";
 
   return `
-    ${card("Login", `
-      <p>Sign in with your email and password to link this UI to your account in the database.</p>
+    ${card("Sign in", `
+      <p>Authenticate against the backend and we will resolve your user identity via <code>/auth/me</code>.</p>
       <form id="login-form" class="form-grid">
         <label>Email address
           <input name="email" type="email" value="${escapeHtml(state.authForm.email)}" autocomplete="email" required />
@@ -194,7 +189,7 @@ function renderDashboard() {
         <label>Password
           <input name="password" type="password" value="${escapeHtml(state.authForm.password)}" autocomplete="current-password" required />
         </label>
-        <button type="submit">Log in</button>
+        <button type="submit">${state.loading && !currentUserId() ? "Signing in..." : "Sign in"}</button>
       </form>
     `)}
     ${card("Home", `
@@ -203,7 +198,7 @@ function renderDashboard() {
         <a class="button" href="#/log-food">Log food</a>
         <a class="button secondary" href="#/cupboard">View cupboard</a>
         <a class="button secondary" href="#/add-cupboard-item">Add cupboard item</a>
-        <a class="button secondary" href="/ingredients">Add ingredient</a>
+        <a class="button secondary" href="#/add-ingredient">Add ingredient</a>
       </div>
     `)}
     ${card("Recent food entries", previewHtml)}
@@ -233,7 +228,7 @@ function renderFoodForm() {
       <label>Rating (1-5)
         <input name="rating" type="number" min="1" max="5" value="${escapeHtml(state.foodForm.rating)}" />
       </label>
-      <button type="submit">Save food entry</button>
+      <button type="submit">${state.loading ? "Saving..." : "Save food entry"}</button>
     </form>
   `);
 }
@@ -265,23 +260,76 @@ function renderEntries() {
   `);
 }
 
+function renderCupboardRows() {
+  if (!state.cupboardItems.length) {
+    return "<p class='empty'>No cupboard items yet. Add one to get started.</p>";
+  }
+
+  return `<ul class="list">${state.cupboardItems.map((item) => {
+    const isEditing = state.cupboardEditingId === item.id;
+    if (isEditing) {
+      return `
+        <li>
+          <form class="form-grid cupboard-update-form" data-item-id="${item.id}">
+            <label>Quantity
+              <input name="quantity" type="number" step="0.01" value="${escapeHtml(item.quantity ?? "")}" />
+            </label>
+            <label>Unit
+              <input name="unit" value="${escapeHtml(item.unit || "")}" />
+            </label>
+            <label>Stock status
+              <select name="stock_status">
+                ${stockStatusOptions.map((status) => `<option value="${status}" ${item.stock_status === status ? "selected" : ""}>${status}</option>`).join("")}
+              </select>
+            </label>
+            <label>Shelf name
+              <input name="shelf_name" value="${escapeHtml(item.shelf_name || "")}" />
+            </label>
+            <div class="actions">
+              <button type="submit">Save update</button>
+              <button type="button" class="cupboard-cancel-edit">Cancel</button>
+            </div>
+          </form>
+        </li>
+      `;
+    }
+
+    return `
+      <li>
+        <div><strong>${escapeHtml(item.ingredient_display_name || item.ingredient_canonical_name || item.ingredient_id)}</strong></div>
+        <div class="meta">Qty: ${escapeHtml(item.quantity ?? "n/a")} ${escapeHtml(item.unit || "")} · Status: ${escapeHtml(item.stock_status || "n/a")} · Shelf: ${escapeHtml(item.shelf_name || "n/a")}</div>
+        <div class="actions">
+          <button type="button" class="cupboard-edit" data-item-id="${item.id}">Edit</button>
+          <button type="button" class="cupboard-delete" data-item-id="${item.id}">Delete</button>
+        </div>
+      </li>
+    `;
+  }).join("")}</ul>`;
+}
+
 function renderCupboard() {
   return card("Cupboard", `
-    <p>Cupboard API connected.</p>
-    <p class="meta">Planned fields: ingredient, quantity, unit, stock status, shelf name.</p>
+    <p>Manage your cupboard items with full create/read/update/delete support.</p>
+    <div class="actions">
+      <a class="button" href="#/add-cupboard-item">Add cupboard item</a>
+      <button id="refresh-cupboard" type="button">Refresh</button>
+    </div>
+    ${renderCupboardRows()}
   `);
 }
 
 function renderAddCupboardItem() {
   const ingredientOptions = state.ingredients.length
-    ? state.ingredients.map((ingredient) => `<option value="${ingredient.id}">${escapeHtml(ingredient.display_name)}</option>`).join("")
+    ? state.ingredients
+      .map((ingredient) => `<option value="${ingredient.id}" ${state.cupboardForm.ingredient_id === ingredient.id ? "selected" : ""}>${escapeHtml(ingredient.display_name)}</option>`)
+      .join("")
     : "<option value=''>No ingredients loaded</option>";
 
   return card("Add cupboard item", `
-    <p class="meta">This form is ready, but submit is disabled until backend cupboard endpoints are implemented.</p>
+    <p class="meta">Create a cupboard entry linked to one ingredient.</p>
     <form id="cupboard-form" class="form-grid">
       <label>Ingredient
-        <select name="ingredient_id">${ingredientOptions}</select>
+        <select name="ingredient_id" required>${ingredientOptions}</select>
       </label>
       <label>Quantity
         <input name="quantity" type="number" step="0.01" value="${escapeHtml(state.cupboardForm.quantity)}" />
@@ -297,7 +345,7 @@ function renderAddCupboardItem() {
       <label>Shelf name
         <input name="shelf_name" value="${escapeHtml(state.cupboardForm.shelf_name)}" placeholder="e.g. Pantry" />
       </label>
-      <button type="submit" disabled>Submit pending backend support</button>
+      <button type="submit">${state.loading ? "Adding..." : "Add cupboard item"}</button>
     </form>
   `);
 }
@@ -326,7 +374,7 @@ function renderAddIngredient() {
           placeholder="comma-separated months, e.g. 6,7,8,9"
         />
       </label>
-      <button type="submit">Create ingredient</button>
+      <button type="submit">${state.loading ? "Creating..." : "Create ingredient"}</button>
     </form>
   `);
 }
@@ -344,15 +392,40 @@ function attachEvents() {
 
   const cupboardForm = document.querySelector("#cupboard-form");
   if (cupboardForm) {
-    cupboardForm.addEventListener("submit", (event) => {
-      event.preventDefault();
-    });
+    cupboardForm.addEventListener("submit", onSubmitCupboardItem);
   }
 
   const ingredientForm = document.querySelector("#ingredient-form");
   if (ingredientForm) {
     ingredientForm.addEventListener("submit", onSubmitIngredient);
   }
+
+  document.querySelector("#refresh-cupboard")?.addEventListener("click", async () => {
+    await loadCupboardItems();
+  });
+
+  document.querySelectorAll(".cupboard-edit").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      const itemId = event.currentTarget.getAttribute("data-item-id");
+      state.cupboardEditingId = itemId || "";
+      render();
+    });
+  });
+
+  document.querySelectorAll(".cupboard-cancel-edit").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.cupboardEditingId = "";
+      render();
+    });
+  });
+
+  document.querySelectorAll(".cupboard-update-form").forEach((form) => {
+    form.addEventListener("submit", onSubmitCupboardUpdate);
+  });
+
+  document.querySelectorAll(".cupboard-delete").forEach((button) => {
+    button.addEventListener("click", onDeleteCupboardItem);
+  });
 }
 
 async function onSubmitLogin(event) {
@@ -365,37 +438,48 @@ async function onSubmitLogin(event) {
   state.authForm.password = "";
 
   if (!email || !password) {
-    state.feedback = "Email and password are required.";
+    setFeedback("error", "Email and password are required.");
     render();
     return;
   }
 
   try {
-    const response = await loginWithEmail({ email, password });
-    setUserId(response.user_id);
-    setUserEmail(response.email);
-    if (!state.feedback) {
-      state.feedback = `Logged in as ${response.email}.`;
-    }
-  } catch (error) {
-    state.feedback = getLoginErrorMessage(error);
-  }
+    state.loading = true;
+    setFeedback("notice", "Signing in...");
+    render();
 
-  render();
+    const response = await loginWithEmail({ email, password });
+    const authSubject = response.email || response.user_id;
+    const identity = await getCurrentUser(authSubject);
+
+    state.authSubject = authSubject;
+    state.currentUser = {
+      user_id: identity.user_id,
+      email: identity.email,
+      display_name: identity.display_name,
+    };
+
+    setFeedback("success", `Signed in as ${identity.email}.`);
+    await Promise.all([loadFoodEntries(false), loadCupboardItems(false)]);
+  } catch (error) {
+    state.currentUser = null;
+    state.authSubject = "";
+    setFeedback("error", getLoginErrorMessage(error));
+  } finally {
+    state.loading = false;
+    render();
+  }
 }
 
 async function onSubmitFoodEntry(event) {
   event.preventDefault();
-  const userId = getUserId();
-  if (!userId) {
-    state.feedback = "A valid user UUID is required before posting food entries.";
-    render();
+  if (!ensureAuthenticated("logging food")) {
     return;
   }
 
+  const userId = currentUserId();
   const formData = new FormData(event.target);
   const payload = {
-    user_id: userId,
     description: (formData.get("description") || "").toString().trim(),
     raw_input: (formData.get("raw_input") || "").toString().trim() || null,
     input_method: formData.get("input_method"),
@@ -403,32 +487,155 @@ async function onSubmitFoodEntry(event) {
     rating: formData.get("rating") ? Number(formData.get("rating")) : null,
   };
 
+  state.foodForm = {
+    description: payload.description,
+    raw_input: payload.raw_input || "",
+    input_method: payload.input_method,
+    meal_time: payload.meal_time || "",
+    rating: payload.rating ?? "",
+  };
+
   if (!payload.description) {
-    state.feedback = "Description is required.";
+    setFeedback("error", "Description is required.");
     render();
     return;
   }
 
   try {
-    state.feedback = "Saving food entry...";
+    state.loading = true;
+    setFeedback("notice", "Saving food entry...");
     render();
     await createUserFoodEntry(userId, payload);
-    state.foodForm = { description: "", raw_input: "", input_method: "text", meal_time: "", rating: "" };
-    state.feedback = "Food entry saved.";
-    await loadFoodEntries();
+    state.foodForm = defaultFoodForm();
+    setFeedback("success", "Food entry saved.");
+    await loadFoodEntries(false);
     window.location.hash = "#/entries";
   } catch (error) {
-    state.feedback = `Could not save food entry: ${error.message}`;
+    setFeedback("error", `Could not save food entry: ${error.message}`);
+  } finally {
+    state.loading = false;
+    render();
+  }
+}
+
+async function onSubmitCupboardItem(event) {
+  event.preventDefault();
+  if (!ensureAuthenticated("adding cupboard items")) {
+    return;
+  }
+
+  const formData = new FormData(event.target);
+  const payload = {
+    ingredient_id: (formData.get("ingredient_id") || "").toString(),
+    quantity: formData.get("quantity") ? Number(formData.get("quantity")) : null,
+    unit: (formData.get("unit") || "").toString().trim() || null,
+    stock_status: (formData.get("stock_status") || "in_stock").toString(),
+    shelf_name: (formData.get("shelf_name") || "").toString().trim() || null,
+  };
+
+  state.cupboardForm = {
+    ingredient_id: payload.ingredient_id,
+    quantity: payload.quantity ?? "",
+    unit: payload.unit || "",
+    stock_status: payload.stock_status,
+    shelf_name: payload.shelf_name || "",
+  };
+
+  if (!payload.ingredient_id) {
+    setFeedback("error", "Ingredient is required.");
+    render();
+    return;
+  }
+
+  try {
+    state.loading = true;
+    setFeedback("notice", "Adding cupboard item...");
+    render();
+
+    await createUserStorecupboardItem(currentUserId(), payload);
+    state.cupboardForm = defaultCupboardForm();
+    setFeedback("success", "Cupboard item added.");
+
+    await loadCupboardItems(false);
+    window.location.hash = "#/cupboard";
+  } catch (error) {
+    setFeedback("error", `Could not add cupboard item: ${error.message}`);
+  } finally {
+    state.loading = false;
+    render();
+  }
+}
+
+async function onSubmitCupboardUpdate(event) {
+  event.preventDefault();
+  if (!ensureAuthenticated("updating cupboard items")) {
+    return;
+  }
+
+  const itemId = event.currentTarget.getAttribute("data-item-id");
+  if (!itemId) {
+    setFeedback("error", "Could not determine cupboard item ID.");
+    render();
+    return;
+  }
+
+  const formData = new FormData(event.currentTarget);
+  const payload = {
+    quantity: formData.get("quantity") ? Number(formData.get("quantity")) : null,
+    unit: (formData.get("unit") || "").toString().trim() || null,
+    stock_status: (formData.get("stock_status") || "").toString() || null,
+    shelf_name: (formData.get("shelf_name") || "").toString().trim() || null,
+  };
+
+  try {
+    state.loading = true;
+    setFeedback("notice", "Updating cupboard item...");
+    render();
+
+    await updateUserStorecupboardItem(currentUserId(), itemId, payload);
+    state.cupboardEditingId = "";
+    setFeedback("success", "Cupboard item updated.");
+    await loadCupboardItems(false);
+  } catch (error) {
+    setFeedback("error", `Could not update cupboard item: ${error.message}`);
+  } finally {
+    state.loading = false;
+    render();
+  }
+}
+
+async function onDeleteCupboardItem(event) {
+  if (!ensureAuthenticated("deleting cupboard items")) {
+    return;
+  }
+
+  const itemId = event.currentTarget.getAttribute("data-item-id");
+  if (!itemId) {
+    setFeedback("error", "Could not determine cupboard item ID.");
+    render();
+    return;
+  }
+
+  try {
+    state.loading = true;
+    setFeedback("notice", "Deleting cupboard item...");
+    render();
+
+    await deleteUserStorecupboardItem(currentUserId(), itemId);
+    state.cupboardEditingId = "";
+    setFeedback("success", "Cupboard item deleted.");
+    await loadCupboardItems(false);
+  } catch (error) {
+    setFeedback("error", `Could not delete cupboard item: ${error.message}`);
+  } finally {
+    state.loading = false;
     render();
   }
 }
 
 async function onSubmitIngredient(event) {
   event.preventDefault();
-  const userId = getUserId();
-  if (!userId) {
-    state.feedback = "Log in before adding ingredients.";
-    render();
+  if (!ensureAuthenticated("adding ingredients")) {
     return;
   }
 
@@ -459,33 +666,30 @@ async function onSubmitIngredient(event) {
   };
 
   if (!payload.canonical_name || !payload.display_name || !payload.category) {
-    state.feedback = "Canonical name, display name, and category are required.";
+    setFeedback("error", "Canonical name, display name, and category are required.");
     render();
     return;
   }
 
   if (isSeasonal && !seasonalMonths.length && seasonalMonthsRaw) {
-    state.feedback = "Seasonal months must be comma-separated numbers from 1 to 12.";
+    setFeedback("error", "Seasonal months must be comma-separated numbers from 1 to 12.");
     render();
     return;
   }
 
   try {
-    state.feedback = "Creating ingredient...";
+    state.loading = true;
+    setFeedback("notice", "Creating ingredient...");
     render();
+
     await createIngredient(payload);
-    state.ingredientForm = {
-      canonical_name: "",
-      display_name: "",
-      category: "veg",
-      is_seasonal: false,
-      seasonal_months: "",
-    };
-    state.feedback = "Ingredient created.";
+    state.ingredientForm = defaultIngredientForm();
+    setFeedback("success", "Ingredient created.");
     await loadIngredients();
-    render();
   } catch (error) {
-    state.feedback = `Could not create ingredient: ${error.message}`;
+    setFeedback("error", `Could not create ingredient: ${error.message}`);
+  } finally {
+    state.loading = false;
     render();
   }
 }
@@ -498,27 +702,64 @@ async function loadHealth() {
   }
 }
 
-async function loadFoodEntries() {
-  state.loading = true;
+async function loadFoodEntries(renderOnComplete = true) {
   state.error = "";
-  render();
+
+  if (!currentUserId()) {
+    state.foodEntries = [];
+    if (renderOnComplete) {
+      render();
+    }
+    return;
+  }
 
   try {
-    state.foodEntries = getUserId() ? await getUserFoodEntries(getUserId()) : [];
+    state.foodEntries = await getUserFoodEntries(currentUserId());
   } catch (error) {
     state.foodEntries = [];
     state.error = error instanceof ApiError ? error.message : "Could not load food entries.";
-  } finally {
-    state.loading = false;
+  }
+
+  if (renderOnComplete) {
     render();
   }
 }
 
 async function loadIngredients() {
   try {
-    state.ingredients = await getIngredients();
+    const ingredientResponse = await getIngredients();
+    if (Array.isArray(ingredientResponse)) {
+      state.ingredients = ingredientResponse;
+    } else {
+      state.ingredients = ingredientResponse?.items || [];
+    }
+
+    if (!state.cupboardForm.ingredient_id && state.ingredients.length) {
+      state.cupboardForm.ingredient_id = state.ingredients[0].id;
+    }
   } catch {
     state.ingredients = [];
+  }
+}
+
+async function loadCupboardItems(renderOnComplete = true) {
+  if (!currentUserId()) {
+    state.cupboardItems = [];
+    if (renderOnComplete) {
+      render();
+    }
+    return;
+  }
+
+  try {
+    state.cupboardItems = await getUserStorecupboardItems(currentUserId());
+  } catch (error) {
+    state.cupboardItems = [];
+    setFeedback("error", `Could not load cupboard items: ${error.message}`);
+  }
+
+  if (renderOnComplete) {
+    render();
   }
 }
 
@@ -532,19 +773,30 @@ function render() {
   if (state.route === "add-cupboard-item") content = renderAddCupboardItem();
   if (state.route === "add-ingredient") content = renderAddIngredient();
 
-  const banner = state.feedback ? `<section class="card notice">${escapeHtml(state.feedback)}</section>` : "";
+  const bannerClass = state.feedback.type || "notice";
+  const banner = state.feedback.message ? `<section class="card ${bannerClass}">${escapeHtml(state.feedback.message)}</section>` : "";
   renderLayout(`${banner}${content}`);
   attachEvents();
 }
 
 async function bootstrap() {
   setRouteFromHash();
-  await Promise.all([loadHealth(), loadIngredients(), loadFoodEntries()]);
+  await Promise.all([loadHealth(), loadIngredients()]);
   render();
 }
 
-window.addEventListener("hashchange", () => {
+window.addEventListener("hashchange", async () => {
   setRouteFromHash();
+
+  if (state.route === "entries") {
+    await loadFoodEntries(false);
+  }
+
+  if (state.route === "cupboard") {
+    await loadCupboardItems(false);
+  }
+
+  clearFeedback();
   render();
 });
 
