@@ -574,3 +574,11 @@ code {
     bottom: 4.9rem;
   }
 }
+
+.shopping-item-checked {
+  opacity: 0.75;
+}
+
+.shopping-item-checked strong {
+  text-decoration: line-through;
+}
