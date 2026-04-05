@@ -113,6 +113,8 @@ const defaultCupboardForm = () => ({
   unit: "",
   stock_status: "in_stock",
   shelf_name: "",
+  best_before_date: "",
+  next_reminder_at: "",
 });
 
 const defaultIngredientForm = () => ({
@@ -336,6 +338,30 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
+function formatDateForDateInput(value) {
+  if (!value) {
+    return "";
+  }
+  const datePart = String(value).split("T")[0].split(" ")[0];
+  return /^\d{4}-\d{2}-\d{2}$/.test(datePart) ? datePart : "";
+}
+
+function formatDateTimeForInput(value) {
+  if (!value) {
+    return "";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "";
+  }
+  const year = parsed.getFullYear();
+  const month = String(parsed.getMonth() + 1).padStart(2, "0");
+  const day = String(parsed.getDate()).padStart(2, "0");
+  const hours = String(parsed.getHours()).padStart(2, "0");
+  const minutes = String(parsed.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
 function renderLayout(content) {
   const app = document.querySelector("#app");
   const userId = currentUserId();
@@ -510,6 +536,12 @@ function renderCupboardRows() {
             <label>Shelf name
               <input name="shelf_name" value="${escapeHtml(item.shelf_name || "")}" />
             </label>
+            <label>Best before
+              <input name="best_before_date" type="date" value="${escapeHtml(formatDateForDateInput(item.best_before_date))}" />
+            </label>
+            <label>Next reminder
+              <input name="next_reminder_at" type="datetime-local" value="${escapeHtml(formatDateTimeForInput(item.next_reminder_at))}" />
+            </label>
             <div class="actions">
               <button type="submit" class="button button-primary">Save update</button>
               <button type="button" class="button button-secondary cupboard-cancel-edit">Cancel</button>
@@ -523,6 +555,7 @@ function renderCupboardRows() {
       <li>
         <div><strong>${escapeHtml(item.ingredient_display_name || item.ingredient_canonical_name || item.ingredient_id)}</strong></div>
         <div class="meta">Qty: ${escapeHtml(item.quantity ?? "n/a")} ${escapeHtml(item.unit || "")} · Status: ${escapeHtml(item.stock_status || "n/a")} · Shelf: ${escapeHtml(item.shelf_name || "n/a")}</div>
+        <div class="meta">Best before: ${escapeHtml(item.best_before_date || "n/a")} · Next reminder: ${escapeHtml(item.next_reminder_at || "n/a")}</div>
         <div class="actions">
           <button type="button" class="button button-secondary cupboard-edit" data-item-id="${item.id}">Edit</button>
           <button type="button" class="button button-danger cupboard-delete" data-item-id="${item.id}">Delete</button>
@@ -573,6 +606,12 @@ function renderAddCupboardItem() {
       </label>
       <label>Shelf name
         <input name="shelf_name" value="${escapeHtml(state.cupboardForm.shelf_name)}" placeholder="e.g. Pantry" />
+      </label>
+      <label>Best before
+        <input name="best_before_date" type="date" value="${escapeHtml(state.cupboardForm.best_before_date)}" />
+      </label>
+      <label>Next reminder
+        <input name="next_reminder_at" type="datetime-local" value="${escapeHtml(state.cupboardForm.next_reminder_at)}" />
       </label>
       <button type="submit" class="button button-primary button-block" ${hasIngredients && !state.cupboardSubmitting ? "" : "disabled"}>${state.cupboardSubmitting ? "Adding..." : "Add cupboard item"}</button>
     </form>

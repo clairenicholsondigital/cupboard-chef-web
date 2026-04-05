@@ -210,6 +210,8 @@ Automatically updates `updated_at` timestamps on row updates.
 | unit           | text       |
 | stock_status   | enum       |
 | shelf_name     | text       |
+| best_before_date | date     |
+| next_reminder_at | timestamptz |
 | created_at     | timestamptz|
 | updated_at     | timestamptz|
 

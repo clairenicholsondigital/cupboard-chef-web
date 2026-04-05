@@ -250,6 +250,8 @@ class StorecupboardItemCreate(BaseModel):
     unit: Optional[str] = None
     stock_status: str = "in_stock"
     shelf_name: Optional[str] = None
+    best_before_date: Optional[str] = None
+    next_reminder_at: Optional[str] = None
 
 
 class NestedStorecupboardItemCreate(BaseModel):
@@ -258,6 +260,8 @@ class NestedStorecupboardItemCreate(BaseModel):
     unit: Optional[str] = None
     stock_status: str = "in_stock"
     shelf_name: Optional[str] = None
+    best_before_date: Optional[str] = None
+    next_reminder_at: Optional[str] = None
 
 
 class StorecupboardItemUpdate(BaseModel):
@@ -265,6 +269,8 @@ class StorecupboardItemUpdate(BaseModel):
     unit: Optional[str] = None
     stock_status: Optional[str] = None
     shelf_name: Optional[str] = None
+    best_before_date: Optional[str] = None
+    next_reminder_at: Optional[str] = None
 
 
 class StorecupboardItemOut(BaseModel):
@@ -275,6 +281,8 @@ class StorecupboardItemOut(BaseModel):
     unit: Optional[str]
     stock_status: Optional[str]
     shelf_name: Optional[str]
+    best_before_date: Optional[str]
+    next_reminder_at: Optional[str]
     ingredient_display_name: Optional[str] = None
     ingredient_canonical_name: Optional[str] = None
 
@@ -1599,6 +1607,8 @@ def list_storecupboard(
                         s.unit,
                         s.stock_status::text,
                         s.shelf_name,
+                        s.best_before_date::text,
+                        s.next_reminder_at::text,
                         i.display_name,
                         i.canonical_name
                     from user_storecupboard_items s
@@ -1626,8 +1636,10 @@ def list_storecupboard(
                 "unit": row[4],
                 "stock_status": row[5],
                 "shelf_name": row[6],
-                "ingredient_display_name": row[7],
-                "ingredient_canonical_name": row[8],
+                "best_before_date": row[7],
+                "next_reminder_at": row[8],
+                "ingredient_display_name": row[9],
+                "ingredient_canonical_name": row[10],
             }
             for row in rows
         ],
@@ -1656,6 +1668,8 @@ def list_user_storecupboard_items(
                         s.unit,
                         s.stock_status::text,
                         s.shelf_name,
+                        s.best_before_date::text,
+                        s.next_reminder_at::text,
                         i.display_name,
                         i.canonical_name
                     from user_storecupboard_items s
@@ -1680,8 +1694,10 @@ def list_user_storecupboard_items(
             "unit": row[4],
             "stock_status": row[5],
             "shelf_name": row[6],
-            "ingredient_display_name": row[7],
-            "ingredient_canonical_name": row[8],
+            "best_before_date": row[7],
+            "next_reminder_at": row[8],
+            "ingredient_display_name": row[9],
+            "ingredient_canonical_name": row[10],
         }
         for row in rows
     ]
@@ -1705,9 +1721,11 @@ def create_user_storecupboard_item(
                         quantity,
                         unit,
                         stock_status,
-                        shelf_name
+                        shelf_name,
+                        best_before_date,
+                        next_reminder_at
                     )
-                    values (%s, %s, %s, %s, %s::stock_status, %s)
+                    values (%s, %s, %s, %s, %s::stock_status, %s, %s::date, %s::timestamptz)
                     returning
                         id,
                         user_id,
@@ -1715,7 +1733,9 @@ def create_user_storecupboard_item(
                         quantity::float8,
                         unit,
                         stock_status::text,
-                        shelf_name
+                        shelf_name,
+                        best_before_date::text,
+                        next_reminder_at::text
                     """,
                     (
                         str(user_id),
@@ -1724,6 +1744,8 @@ def create_user_storecupboard_item(
                         payload.unit,
                         payload.stock_status,
                         payload.shelf_name,
+                        payload.best_before_date,
+                        payload.next_reminder_at,
                     ),
                 )
                 row = cur.fetchone()
@@ -1751,6 +1773,8 @@ def create_user_storecupboard_item(
         "unit": row[4],
         "stock_status": row[5],
         "shelf_name": row[6],
+        "best_before_date": row[7],
+        "next_reminder_at": row[8],
         "ingredient_display_name": ingredient[0] if ingredient else None,
         "ingredient_canonical_name": ingredient[1] if ingredient else None,
     }
@@ -1775,6 +1799,8 @@ def update_user_storecupboard_item(
                         unit = coalesce(%s, s.unit),
                         stock_status = coalesce(%s::stock_status, s.stock_status),
                         shelf_name = coalesce(%s, s.shelf_name),
+                        best_before_date = coalesce(%s::date, s.best_before_date),
+                        next_reminder_at = coalesce(%s::timestamptz, s.next_reminder_at),
                         updated_at = now()
                     where s.id = %s and s.user_id = %s
                     returning
@@ -1784,13 +1810,17 @@ def update_user_storecupboard_item(
                         s.quantity::float8,
                         s.unit,
                         s.stock_status::text,
-                        s.shelf_name
+                        s.shelf_name,
+                        s.best_before_date::text,
+                        s.next_reminder_at::text
                     """,
                     (
                         payload.quantity,
                         payload.unit,
                         payload.stock_status,
                         payload.shelf_name,
+                        payload.best_before_date,
+                        payload.next_reminder_at,
                         str(item_id),
                         str(user_id),
                     ),
@@ -1826,6 +1856,8 @@ def update_user_storecupboard_item(
         "unit": row[4],
         "stock_status": row[5],
         "shelf_name": row[6],
+        "best_before_date": row[7],
+        "next_reminder_at": row[8],
         "ingredient_display_name": ingredient[0] if ingredient else None,
         "ingredient_canonical_name": ingredient[1] if ingredient else None,
     }
