@@ -94,7 +94,7 @@ const ROUTE_META = [
   { route: "shopping-lists", label: "Shopping", icon: ClipboardList },
   { route: "add-recipe", label: "Add recipe", icon: ScrollText },
 ];
-const PRIMARY_TAB_ROUTES = ["dashboard", "ingredients", "cupboard", "shopping-lists", "recipes"];
+const PRIMARY_TAB_ROUTES = ["dashboard", "cupboard", "shopping-lists", "recipes"];
 const PAGE_META = {
   dashboard: { title: "Dashboard", subtitle: "Track meals, cupboard stock, and recipes in one place." },
   login: { title: "Login", subtitle: "Sign in to access your synced Cupboard Chef data." },
