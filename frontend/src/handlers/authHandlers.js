@@ -1,5 +1,6 @@
-export async function handleSubmitLogin(event, deps) {
-  const {
+export async function handleSubmitLogin(
+  event,
+  {
     state,
     render,
     setFeedback,
@@ -14,70 +15,95 @@ export async function handleSubmitLogin(event, deps) {
     loadCupboardItems,
     loadRecipes,
     loadShoppingLists,
-  } = deps;
-
+  },
+) {
   event.preventDefault();
-  const formData = new FormData(event.target);
-  const email = (formData.get("email") || "").toString().trim();
-  const password = (formData.get("password") || "").toString();
+
+  const form = event.currentTarget;
+  const formData = new FormData(form);
+
+  const email = String(formData.get("email") || "").trim();
+  const password = String(formData.get("password") || "");
 
   state.authForm.email = email;
-  state.authForm.password = "";
+  state.authForm.password = password;
 
   if (!email || !password) {
-    setFeedback("error", "Email and password are required.");
+    setFeedback("error", "Please enter your email and password.");
     render();
     return;
   }
 
-  try {
-    state.loading = true;
-    setFeedback("notice", "Signing in...");
-    render();
+  state.loading = true;
+  setFeedback("notice", "Signing in...");
+  render();
 
+  try {
     clearStoredAccessToken();
 
-    const response = await loginWithEmail({ email, password });
+    const loginResponse = await loginWithEmail({ email, password });
+    console.log("[auth] login response", loginResponse);
 
-    if (!response?.access_token) {
-      throw new Error("Login succeeded but no access token was returned.");
+    const token =
+      loginResponse?.access_token ||
+      loginResponse?.token ||
+      loginResponse?.auth_token ||
+      loginResponse?.data?.access_token ||
+      loginResponse?.data?.token ||
+      "";
+
+    if (!token) {
+      throw new Error("Login succeeded, but no access token was returned.");
     }
 
-    storeAccessToken(response.access_token);
+    storeAccessToken(token);
+    console.log("[auth] token stored");
 
-    const identity = await getCurrentUser(response.access_token);
+    const identity = await getCurrentUser();
+    console.log("[auth] current user", identity);
 
-    state.authSubject = response.email || response.user_id || "";
+    if (!identity?.user_id) {
+      throw new Error("Signed in, but could not load the current user.");
+    }
+
     state.currentUser = {
       user_id: identity.user_id,
-      email: identity.email,
-      display_name: identity.display_name,
+      email: identity.email || email,
+      display_name: identity.display_name || "",
     };
-
+    state.authSubject = identity.email || identity.user_id || "";
     storeCurrentUser(state.currentUser);
 
-    setFeedback("success", `Signed in as ${identity.email}.`);
-    await Promise.all([
-      loadFoodEntries(false),
-      loadCupboardItems(false),
-      loadRecipes?.(false),
-      loadShoppingLists?.(false),
-    ]);
-    window.location.hash = "#/dashboard";
-  } catch (error) {
-    clearLocalSession();
-    setFeedback("error", getLoginErrorMessage(error));
-  } finally {
     state.loading = false;
+    state.authForm.password = "";
+
+    setFeedback("success", "Signed in successfully.");
+
+    state.route = "dashboard";
+    window.location.hash = "#/dashboard";
+
+    await Promise.all([
+      loadFoodEntries(render, false),
+      loadCupboardItems(render, false),
+      loadRecipes(render, false),
+      loadShoppingLists(render, false),
+    ]);
+
+    render();
+  } catch (error) {
+    console.error("[auth] login failed", error);
+
+    state.loading = false;
+    clearLocalSession();
+
+    setFeedback("error", getLoginErrorMessage(error));
     render();
   }
 }
 
-export function handleLogout(deps) {
-  const { clearLocalSession, setFeedback, render } = deps;
-
+export function handleLogout({ clearLocalSession, setFeedback, render }) {
   clearLocalSession();
-  setFeedback("notice", "Signed out.");
+  setFeedback("success", "You have been logged out.");
   window.location.hash = "#/login";
   render();
 }
