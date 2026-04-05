@@ -14,6 +14,18 @@ import {
   updateUserStorecupboardItem,
 } from "./api.js";
 
+import { handleSubmitLogin, handleLogout } from "./handlers/authHandlers.js";
+import { handleSubmitFoodEntry } from "./handlers/foodHandlers.js";
+import {
+  handleCancelCupboardEdit,
+  handleDeleteCupboardItem,
+  handleRefreshCupboard,
+  handleStartCupboardEdit,
+  handleSubmitCupboardItem,
+  handleSubmitCupboardUpdate,
+} from "./handlers/cupboardHandlers.js";
+import { handleSubmitIngredient } from "./handlers/ingredientHandlers.js";
+
 const mealTimeOptions = ["am", "breakfast", "lunch", "pm", "dinner", "evening", "snack", "late_night"];
 const inputMethodOptions = ["text", "voice", "imported"];
 const stockStatusOptions = ["in_stock", "low", "out_of_stock"];
@@ -271,9 +283,7 @@ function renderLayout(content) {
   `;
 
   document.querySelector("#logout")?.addEventListener("click", () => {
-    clearLocalSession();
-    setFeedback("notice", "Signed out.");
-    render();
+    onLogout();
   });
 }
 
@@ -532,21 +542,18 @@ function attachEvents() {
   }
 
   document.querySelector("#refresh-cupboard")?.addEventListener("click", async () => {
-    await loadCupboardItems();
+    await onRefreshCupboard();
   });
 
   document.querySelectorAll(".cupboard-edit").forEach((button) => {
     button.addEventListener("click", (event) => {
-      const itemId = event.currentTarget.getAttribute("data-item-id");
-      state.cupboardEditingId = itemId || "";
-      render();
+      onStartCupboardEdit(event);
     });
   });
 
   document.querySelectorAll(".cupboard-cancel-edit").forEach((button) => {
     button.addEventListener("click", () => {
-      state.cupboardEditingId = "";
-      render();
+      onCancelCupboardEdit();
     });
   });
 
@@ -560,301 +567,103 @@ function attachEvents() {
 }
 
 async function onSubmitLogin(event) {
-  event.preventDefault();
-  const formData = new FormData(event.target);
-  const email = (formData.get("email") || "").toString().trim();
-  const password = (formData.get("password") || "").toString();
-
-  state.authForm.email = email;
-  state.authForm.password = "";
-
-  if (!email || !password) {
-    setFeedback("error", "Email and password are required.");
-    render();
-    return;
-  }
-
-  try {
-    state.loading = true;
-    setFeedback("notice", "Signing in...");
-    render();
-
-    clearStoredAccessToken();
-
-    const response = await loginWithEmail({ email, password });
-
-    if (!response?.access_token) {
-      throw new Error("Login succeeded but no access token was returned.");
-    }
-
-    storeAccessToken(response.access_token);
-
-    const identity = await getCurrentUser(response.access_token);
-
-    state.authSubject = response.email || response.user_id || "";
-    state.currentUser = {
-      user_id: identity.user_id,
-      email: identity.email,
-      display_name: identity.display_name,
-    };
-
-    storeCurrentUser(state.currentUser);
-
-    setFeedback("success", `Signed in as ${identity.email}.`);
-    await Promise.all([loadFoodEntries(false), loadCupboardItems(false)]);
-  } catch (error) {
-    clearLocalSession();
-    setFeedback("error", getLoginErrorMessage(error));
-  } finally {
-    state.loading = false;
-    render();
-  }
+  await handleSubmitLogin(event, {
+    state,
+    render,
+    setFeedback,
+    clearStoredAccessToken,
+    clearLocalSession,
+    getLoginErrorMessage,
+    loginWithEmail,
+    storeAccessToken,
+    getCurrentUser,
+    storeCurrentUser,
+    loadFoodEntries,
+    loadCupboardItems,
+  });
 }
 
 async function onSubmitFoodEntry(event) {
-  event.preventDefault();
-  if (!ensureAuthenticated("logging food")) {
-    return;
-  }
-
-  const userId = currentUserId();
-  const formData = new FormData(event.target);
-  const payload = {
-    description: (formData.get("description") || "").toString().trim(),
-    raw_input: (formData.get("raw_input") || "").toString().trim() || null,
-    input_method: formData.get("input_method"),
-    meal_time: formData.get("meal_time") || null,
-    rating: formData.get("rating") ? Number(formData.get("rating")) : null,
-  };
-
-  state.foodForm = {
-    description: payload.description,
-    raw_input: payload.raw_input || "",
-    input_method: payload.input_method,
-    meal_time: payload.meal_time || "",
-    rating: payload.rating ?? "",
-  };
-
-  if (!payload.description) {
-    setFeedback("error", "Description is required.");
-    render();
-    return;
-  }
-
-  try {
-    state.loading = true;
-    setFeedback("notice", "Saving food entry...");
-    render();
-    await createUserFoodEntry(userId, payload);
-    state.foodForm = defaultFoodForm();
-    setFeedback("success", "Food entry saved.");
-    await loadFoodEntries(false);
-    window.location.hash = "#/entries";
-  } catch (error) {
-    if (!handlePossiblyStaleSession(error)) {
-      setFeedback("error", `Could not save food entry: ${error.message}`);
-    }
-  } finally {
-    state.loading = false;
-    render();
-  }
+  await handleSubmitFoodEntry(event, {
+    state,
+    render,
+    setFeedback,
+    ensureAuthenticated,
+    currentUserId,
+    createUserFoodEntry,
+    defaultFoodForm,
+    loadFoodEntries,
+    handlePossiblyStaleSession,
+  });
 }
 
 async function onSubmitCupboardItem(event) {
-  event.preventDefault();
-  if (!ensureAuthenticated("adding cupboard items")) {
-    return;
-  }
-
-  const formData = new FormData(event.target);
-  const payload = {
-    ingredient_id: (formData.get("ingredient_id") || "").toString(),
-    quantity: formData.get("quantity") ? Number(formData.get("quantity")) : null,
-    unit: (formData.get("unit") || "").toString().trim() || null,
-    stock_status: (formData.get("stock_status") || "in_stock").toString(),
-    shelf_name: (formData.get("shelf_name") || "").toString().trim() || null,
-  };
-
-  state.cupboardForm = {
-    ingredient_id: payload.ingredient_id,
-    quantity: payload.quantity ?? "",
-    unit: payload.unit || "",
-    stock_status: payload.stock_status,
-    shelf_name: payload.shelf_name || "",
-  };
-
-  if (!payload.ingredient_id) {
-    state.cupboardError = "Ingredient is required.";
-    setFeedback("error", "Ingredient is required.");
-    render();
-    return;
-  }
-
-  try {
-    state.cupboardSubmitting = true;
-    state.cupboardError = "";
-    state.cupboardSuccess = "";
-    setFeedback("notice", "Adding cupboard item...");
-    render();
-
-    await createUserStorecupboardItem(currentUserId(), payload);
-    state.cupboardForm = defaultCupboardForm();
-    state.cupboardSuccess = "Cupboard item added.";
-    setFeedback("success", "Cupboard item added.");
-
-    await loadCupboardItems(false);
-    window.location.hash = "#/cupboard";
-  } catch (error) {
-    if (!handlePossiblyStaleSession(error)) {
-      state.cupboardError = `Could not add cupboard item: ${error.message}`;
-      setFeedback("error", `Could not add cupboard item: ${error.message}`);
-    }
-  } finally {
-    state.cupboardSubmitting = false;
-    render();
-  }
+  await handleSubmitCupboardItem(event, {
+    state,
+    render,
+    setFeedback,
+    ensureAuthenticated,
+    currentUserId,
+    createUserStorecupboardItem,
+    defaultCupboardForm,
+    loadCupboardItems,
+    handlePossiblyStaleSession,
+  });
 }
 
 async function onSubmitCupboardUpdate(event) {
-  event.preventDefault();
-  if (!ensureAuthenticated("updating cupboard items")) {
-    return;
-  }
-
-  const itemId = event.currentTarget.getAttribute("data-item-id");
-  if (!itemId) {
-    setFeedback("error", "Could not determine cupboard item ID.");
-    render();
-    return;
-  }
-
-  const formData = new FormData(event.currentTarget);
-  const payload = {
-    quantity: formData.get("quantity") ? Number(formData.get("quantity")) : null,
-    unit: (formData.get("unit") || "").toString().trim() || null,
-    stock_status: (formData.get("stock_status") || "").toString() || null,
-    shelf_name: (formData.get("shelf_name") || "").toString().trim() || null,
-  };
-
-  try {
-    state.cupboardSubmitting = true;
-    state.cupboardError = "";
-    state.cupboardSuccess = "";
-    setFeedback("notice", "Updating cupboard item...");
-    render();
-
-    await updateUserStorecupboardItem(currentUserId(), itemId, payload);
-    state.cupboardEditingId = "";
-    state.cupboardSuccess = "Cupboard item updated.";
-    setFeedback("success", "Cupboard item updated.");
-    await loadCupboardItems(false);
-  } catch (error) {
-    if (!handlePossiblyStaleSession(error)) {
-      state.cupboardError = `Could not update cupboard item: ${error.message}`;
-      setFeedback("error", `Could not update cupboard item: ${error.message}`);
-    }
-  } finally {
-    state.cupboardSubmitting = false;
-    render();
-  }
+  await handleSubmitCupboardUpdate(event, {
+    state,
+    render,
+    setFeedback,
+    ensureAuthenticated,
+    currentUserId,
+    updateUserStorecupboardItem,
+    loadCupboardItems,
+    handlePossiblyStaleSession,
+  });
 }
 
 async function onDeleteCupboardItem(event) {
-  if (!ensureAuthenticated("deleting cupboard items")) {
-    return;
-  }
-
-  const itemId = event.currentTarget.getAttribute("data-item-id");
-  if (!itemId) {
-    setFeedback("error", "Could not determine cupboard item ID.");
-    render();
-    return;
-  }
-
-  try {
-    state.cupboardSubmitting = true;
-    state.cupboardError = "";
-    state.cupboardSuccess = "";
-    setFeedback("notice", "Deleting cupboard item...");
-    render();
-
-    await deleteUserStorecupboardItem(currentUserId(), itemId);
-    state.cupboardEditingId = "";
-    state.cupboardSuccess = "Cupboard item deleted.";
-    setFeedback("success", "Cupboard item deleted.");
-    await loadCupboardItems(false);
-  } catch (error) {
-    if (!handlePossiblyStaleSession(error)) {
-      state.cupboardError = `Could not delete cupboard item: ${error.message}`;
-      setFeedback("error", `Could not delete cupboard item: ${error.message}`);
-    }
-  } finally {
-    state.cupboardSubmitting = false;
-    render();
-  }
+  await handleDeleteCupboardItem(event, {
+    state,
+    render,
+    setFeedback,
+    ensureAuthenticated,
+    currentUserId,
+    deleteUserStorecupboardItem,
+    loadCupboardItems,
+    handlePossiblyStaleSession,
+  });
 }
 
 async function onSubmitIngredient(event) {
-  event.preventDefault();
-  if (!ensureAuthenticated("adding ingredients")) {
-    return;
-  }
+  await handleSubmitIngredient(event, {
+    state,
+    render,
+    setFeedback,
+    ensureAuthenticated,
+    createIngredient,
+    defaultIngredientForm,
+    loadIngredients,
+    handlePossiblyStaleSession,
+  });
+}
 
-  const formData = new FormData(event.target);
-  const isSeasonal = formData.get("is_seasonal") === "on";
-  const seasonalMonthsRaw = (formData.get("seasonal_months") || "").toString().trim();
-  const seasonalMonths = seasonalMonthsRaw
-    ? seasonalMonthsRaw
-      .split(",")
-      .map((value) => Number(value.trim()))
-      .filter((value) => Number.isInteger(value) && value >= 1 && value <= 12)
-    : [];
+function onLogout() {
+  handleLogout({ clearLocalSession, setFeedback, render });
+}
 
-  const payload = {
-    canonical_name: (formData.get("canonical_name") || "").toString().trim(),
-    display_name: (formData.get("display_name") || "").toString().trim(),
-    category: (formData.get("category") || "").toString().trim(),
-    is_seasonal: isSeasonal,
-    seasonal_months: isSeasonal ? seasonalMonths : [],
-  };
+async function onRefreshCupboard() {
+  await handleRefreshCupboard({ loadCupboardItems });
+}
 
-  state.ingredientForm = {
-    canonical_name: payload.canonical_name,
-    display_name: payload.display_name,
-    category: payload.category,
-    is_seasonal: payload.is_seasonal,
-    seasonal_months: seasonalMonthsRaw,
-  };
+function onStartCupboardEdit(event) {
+  handleStartCupboardEdit(event, { state, render });
+}
 
-  if (!payload.canonical_name || !payload.display_name || !payload.category) {
-    setFeedback("error", "Canonical name, display name, and category are required.");
-    render();
-    return;
-  }
-
-  if (isSeasonal && !seasonalMonths.length && seasonalMonthsRaw) {
-    setFeedback("error", "Seasonal months must be comma-separated numbers from 1 to 12.");
-    render();
-    return;
-  }
-
-  try {
-    state.loading = true;
-    setFeedback("notice", "Creating ingredient...");
-    render();
-
-    await createIngredient(payload);
-    state.ingredientForm = defaultIngredientForm();
-    setFeedback("success", "Ingredient created.");
-    await loadIngredients();
-  } catch (error) {
-    if (!handlePossiblyStaleSession(error)) {
-      setFeedback("error", `Could not create ingredient: ${error.message}`);
-    }
-  } finally {
-    state.loading = false;
-    render();
-  }
+function onCancelCupboardEdit() {
+  handleCancelCupboardEdit({ state, render });
 }
 
 async function loadHealth() {
