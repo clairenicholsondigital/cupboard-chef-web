@@ -81,7 +81,6 @@ import {
 const mealTimeOptions = ["am", "breakfast", "lunch", "pm", "dinner", "evening", "snack", "late_night"];
 const inputMethodOptions = ["text", "voice", "imported"];
 const stockStatusOptions = ["in_stock", "low", "out_of_stock"];
-
 const ROUTE_META = [
   { route: "dashboard", label: "Dashboard", icon: Home },
   { route: "log-food", label: "Log food", icon: UtensilsCrossed },
@@ -94,10 +93,7 @@ const ROUTE_META = [
   { route: "shopping-lists", label: "Shopping", icon: ClipboardList },
   { route: "add-recipe", label: "Add recipe", icon: ScrollText },
 ];
-
 const PRIMARY_TAB_ROUTES = ["dashboard", "ingredients", "cupboard", "shopping-lists", "recipes"];
-const PUBLIC_ROUTES = new Set(["login"]);
-
 const PAGE_META = {
   dashboard: { title: "Dashboard", subtitle: "Track meals, cupboard stock, and recipes in one place." },
   login: { title: "Login", subtitle: "Sign in to access your synced Cupboard Chef data." },
@@ -117,6 +113,7 @@ const PAGE_META = {
   "shopping-list-detail": { title: "Shopping list detail", subtitle: "Manage list details and item checklist." },
 };
 
+// Use multiple keys so the frontend stays compatible with whichever key api.js is reading.
 const AUTH_STORAGE_KEYS = [
   "cupboard_chef_access_token",
   "access_token",
@@ -180,7 +177,6 @@ const defaultShoppingListItemForm = () => ({
 
 const state = {
   route: "dashboard",
-  postLoginRoute: "dashboard",
   error: "",
   loading: false,
   currentUser: null,
@@ -239,7 +235,7 @@ function safeStorageSet(key, value) {
   try {
     localStorage.setItem(key, value);
   } catch {
-    // Ignore storage write failures.
+    // Ignore storage write failures (private mode / blocked storage).
   }
 }
 
@@ -263,22 +259,6 @@ function currentUserId() {
   return state.currentUser?.user_id || "";
 }
 
-function getStoredUser() {
-  const userId = safeStorageGet(USER_STORAGE_KEYS.userId);
-  const email = safeStorageGet(USER_STORAGE_KEYS.email);
-  const displayName = safeStorageGet(USER_STORAGE_KEYS.displayName);
-
-  if (!userId || !email) {
-    return null;
-  }
-
-  return {
-    user_id: userId,
-    email,
-    display_name: displayName || "",
-  };
-}
-
 function getStoredAccessToken() {
   for (const key of AUTH_STORAGE_KEYS) {
     const value = safeStorageGet(key);
@@ -287,10 +267,6 @@ function getStoredAccessToken() {
     }
   }
   return "";
-}
-
-function hasStoredSessionCandidate() {
-  return Boolean(currentUserId() || getStoredAccessToken());
 }
 
 function storeAccessToken(token) {
@@ -358,8 +334,7 @@ function isAuthError(error) {
     normalized.includes("invalid authentication token") ||
     normalized.includes("authentication token has expired") ||
     normalized.includes("unauthorized") ||
-    normalized.includes("authenticated user was not found") ||
-    normalized.includes("forbidden")
+    normalized.includes("authenticated user was not found")
   );
 }
 
@@ -368,12 +343,7 @@ function handlePossiblyStaleSession(error) {
     return false;
   }
 
-  if (routeRequiresAuth(state.route)) {
-    state.postLoginRoute = state.route;
-  }
-
   clearLocalSession();
-  state.route = "login";
   setFeedback("error", "Your session expired or the saved token is no longer valid. Please sign in again.");
   return true;
 }
@@ -383,11 +353,6 @@ function ensureAuthenticated(actionLabel) {
     return true;
   }
 
-  if (routeRequiresAuth(state.route)) {
-    state.postLoginRoute = state.route;
-  }
-
-  state.route = "login";
   setFeedback("error", `Please sign in before ${actionLabel}.`);
   render();
   return false;
@@ -403,17 +368,10 @@ function getLoginErrorMessage(error) {
   return "Unable to sign in.";
 }
 
-function routeRequiresAuth(route) {
-  return !PUBLIC_ROUTES.has(route);
-}
-
 function setRouteFromHash() {
   const hashRoute = window.location.hash.replace(/^#\/?/, "").split("?")[0];
   if (hashRoute) {
     state.route = hashRoute;
-    if (routeRequiresAuth(hashRoute)) {
-      state.postLoginRoute = hashRoute;
-    }
     return;
   }
 
@@ -438,12 +396,7 @@ function setRouteFromHash() {
     "/profile": "profile",
   };
 
-  const resolvedRoute = pathnameRouteMap[window.location.pathname] || "dashboard";
-  state.route = resolvedRoute;
-
-  if (routeRequiresAuth(resolvedRoute)) {
-    state.postLoginRoute = resolvedRoute;
-  }
+  state.route = pathnameRouteMap[window.location.pathname] || "dashboard";
 }
 
 function isAuthenticated() {
@@ -531,10 +484,10 @@ function getCupboardVisibleItems() {
 
   const filtered = query
     ? normalizedItems.filter((item) => {
-        const name = item.ingredient_display_name || item.ingredient_canonical_name || item.ingredient_id || "";
-        const shelf = item.shelf_name || "";
-        return String(name).toLowerCase().includes(query) || String(shelf).toLowerCase().includes(query);
-      })
+      const name = item.ingredient_display_name || item.ingredient_canonical_name || item.ingredient_id || "";
+      const shelf = item.shelf_name || "";
+      return String(name).toLowerCase().includes(query) || String(shelf).toLowerCase().includes(query);
+    })
     : normalizedItems;
 
   const alphabetical = (a, b) => {
@@ -566,43 +519,30 @@ function getCupboardVisibleItems() {
 
 function renderLayout(content) {
   const app = document.querySelector("#app");
-  if (!app) {
-    return;
-  }
-
   const authenticated = isAuthenticated();
   const activePage = PAGE_META[state.route] || { title: "Cupboard Chef", subtitle: "" };
   const primaryTabs = ROUTE_META.filter((item) => PRIMARY_TAB_ROUTES.includes(item.route));
-
   app.innerHTML = `
     <div class="app-shell app-mobile-shell">
       <header class="app-bar">
         <p class="app-badge">Cupboard Chef</p>
         <div class="app-bar-row">
           <h1>${escapeHtml(activePage.title)}</h1>
-          ${
-            authenticated
-              ? `
+          ${authenticated ? `
             <div class="actions actions-compact">
               <a class="button button-ghost ${state.route === "profile" ? "active" : ""}" href="#/profile">Account</a>
               <button id="logout" type="button" class="button button-ghost">Log out</button>
             </div>
-          `
-              : ""
-          }
+          ` : ""}
         </div>
         ${activePage.subtitle ? `<p class="app-subtitle">${escapeHtml(activePage.subtitle)}</p>` : ""}
       </header>
       <main class="screen-content">${content}</main>
-      ${
-        authenticated
-          ? `
+      ${authenticated ? `
         <nav class="bottom-tabs" aria-label="Bottom navigation tabs">
           ${primaryTabs.map((item) => navLink(item.route, item.label, item.icon, "tab")).join("")}
         </nav>
-      `
-          : ""
-      }
+      ` : ""}
     </div>
   `;
 
@@ -624,14 +564,12 @@ function renderDashboard() {
   const preview = state.foodEntries.slice(0, 3);
   const previewHtml = preview.length
     ? `<ul class="list">${preview
-        .map((entry) => `<li><strong>${escapeHtml(entry.description)}</strong> <span class="meta">${escapeHtml(entry.meal_time || "meal unspecific")}</span></li>`)
-        .join("")}</ul>`
+      .map((entry) => `<li><strong>${escapeHtml(entry.description)}</strong> <span class="meta">${escapeHtml(entry.meal_time || "meal unspecific")}</span></li>`)
+      .join("")}</ul>`
     : "<p class='empty'>No entries yet. Start by logging your first meal.</p>";
 
   return `
-    ${card(
-      "Quick actions",
-      `
+    ${card("Quick actions", `
       <p class="meta">Move quickly between common tasks.</p>
       <div class="actions">
         <a class="button button-primary" href="#/log-food">Log food</a>
@@ -639,17 +577,13 @@ function renderDashboard() {
         <a class="button button-secondary" href="#/add-ingredient">Add ingredient</a>
         <a class="button button-secondary" href="#/add-recipe">Add recipe</a>
       </div>
-    `,
-      "card-soft",
-    )}
+    `, "card-soft")}
     ${card("Recent food entries", previewHtml, "card-soft")}
   `;
 }
 
 function renderLogin() {
-  return card(
-    "Sign in",
-    `
+  return card("Sign in", `
     <p class="meta">Sign in to manage cupboard items, ingredients, meal logs, and recipes.</p>
     <form id="login-form" class="form-grid">
       <label>Email address
@@ -660,15 +594,11 @@ function renderLogin() {
       </label>
       <button type="submit" class="button button-primary button-block">${state.loading && !currentUserId() ? "Signing in..." : "Sign in"}</button>
     </form>
-  `,
-    "card-soft",
-  );
+  `, "card-soft");
 }
 
 function renderProfile() {
-  return card(
-    "Account",
-    `
+  return card("Account", `
     <p class="meta">Signed in as <strong>${escapeHtml(state.currentUser?.email || "Not signed in")}</strong></p>
     <p class="meta">Display name: <code>${escapeHtml(state.currentUser?.display_name || "Not set")}</code></p>
     <p class="meta">User ID: <code>${escapeHtml(state.currentUser?.user_id || "Not signed in")}</code></p>
@@ -677,15 +607,11 @@ function renderProfile() {
     <div class="actions">
       <button id="logout-inline" type="button" class="button button-secondary button-block">Log out</button>
     </div>
-  `,
-    "card-soft",
-  );
+  `, "card-soft");
 }
 
 function renderFoodForm() {
-  return card(
-    "Log food",
-    `
+  return card("Log food", `
     <form id="food-form" class="form-grid">
       <label>Description *
         <input name="description" value="${escapeHtml(state.foodForm.description)}" required minlength="1" />
@@ -709,9 +635,7 @@ function renderFoodForm() {
       </label>
       <button type="submit" class="button button-primary button-block">${state.loading ? "Saving..." : "Save food entry"}</button>
     </form>
-  `,
-    "card-soft",
-  );
+  `, "card-soft");
 }
 
 function renderEntries() {
@@ -727,24 +651,18 @@ function renderEntries() {
     return card("Food entries", "<p class='empty'>No food entries found for this user yet.</p>");
   }
 
-  return card(
-    "Food entries",
-    `
+  return card("Food entries", `
     <ul class="list list-polished">
       ${state.foodEntries
-        .map(
-          (entry) => `
+        .map((entry) => `
           <li>
             <div><strong>${escapeHtml(entry.description)}</strong></div>
             <div class="meta">Meal: ${escapeHtml(entry.meal_time || "n/a")} · Input: ${escapeHtml(entry.input_method || "n/a")} · Rating: ${entry.rating ?? "n/a"}</div>
           </li>
-        `,
-        )
+        `)
         .join("")}
     </ul>
-  `,
-    "card-soft",
-  );
+  `, "card-soft");
 }
 
 function renderCupboardRows() {
@@ -774,11 +692,10 @@ function renderCupboardRows() {
   const editIcon = renderToStaticMarkup(React.createElement(Pencil, { size: 16, strokeWidth: 2 }));
   const deleteIcon = renderToStaticMarkup(React.createElement(Trash2, { size: 16, strokeWidth: 2 }));
 
-  return `<ul class="list list-polished cupboard-compact-list">${visibleItems
-    .map((item) => {
-      const isEditing = state.cupboardEditingId === item.id;
-      if (isEditing) {
-        return `
+  return `<ul class="list list-polished cupboard-compact-list">${visibleItems.map((item) => {
+    const isEditing = state.cupboardEditingId === item.id;
+    if (isEditing) {
+      return `
         <li class="cupboard-row-editing">
           <form class="form-grid cupboard-update-form" data-item-id="${item.id}">
             <label>Quantity
@@ -808,9 +725,9 @@ function renderCupboardRows() {
           </form>
         </li>
       `;
-      }
+    }
 
-      return `
+    return `
       <li class="cupboard-item-row">
         <div class="cupboard-row-main">
           <div class="cupboard-row-topline">
@@ -833,14 +750,19 @@ function renderCupboardRows() {
         </div>
       </li>
     `;
-    })
-    .join("")}</ul>`;
+  }).join("")}</ul>`;
 }
 
 function renderCupboard() {
-  return card(
-    "Cupboard",
-    `
+  const shelfOptions = Array.from(
+    new Set(
+      state.cupboardItems
+        .map((item) => String(item.shelf_name || "").trim())
+        .filter(Boolean),
+    ),
+  ).sort((a, b) => a.localeCompare(b));
+
+  return card("Cupboard", `
     <div class="cupboard-toolbar">
       <input id="cupboard-search" type="search" placeholder="Search ingredient or shelf" value="${escapeHtml(state.cupboardQuery)}" aria-label="Search cupboard items" />
       <select id="cupboard-sort" aria-label="Sort cupboard items">
@@ -852,22 +774,18 @@ function renderCupboard() {
     </div>
     ${state.cupboardSuccess ? `<p class="success">${escapeHtml(state.cupboardSuccess)}</p>` : ""}
     ${renderCupboardRows()}
-  `,
-    "card-soft",
-  );
+  `, "card-soft");
 }
 
 function renderAddCupboardItem() {
   const hasIngredients = state.ingredients.length > 0;
   const ingredientOptions = state.ingredients.length
     ? state.ingredients
-        .map((ingredient) => `<option value="${ingredient.id}" ${state.cupboardForm.ingredient_id === ingredient.id ? "selected" : ""}>${escapeHtml(ingredient.display_name)}</option>`)
-        .join("")
+      .map((ingredient) => `<option value="${ingredient.id}" ${state.cupboardForm.ingredient_id === ingredient.id ? "selected" : ""}>${escapeHtml(ingredient.display_name)}</option>`)
+      .join("")
     : "<option value=''>No ingredients loaded</option>";
 
-  return card(
-    "Add cupboard item",
-    `
+  return card("Add cupboard item", `
     <p class="meta">Create a cupboard entry linked to one ingredient.</p>
     ${state.cupboardSuccess ? `<p class="success">${escapeHtml(state.cupboardSuccess)}</p>` : ""}
     ${state.cupboardError ? `<p class="error">${escapeHtml(state.cupboardError)}</p>` : ""}
@@ -897,15 +815,11 @@ function renderAddCupboardItem() {
       </label>
       <button type="submit" class="button button-primary button-block" ${hasIngredients && !state.cupboardSubmitting ? "" : "disabled"}>${state.cupboardSubmitting ? "Adding..." : "Add cupboard item"}</button>
     </form>
-  `,
-    "card-soft",
-  );
+  `, "card-soft");
 }
 
 function renderAddIngredient() {
-  return card(
-    "Add ingredient",
-    `
+  return card("Add ingredient", `
     <p class="meta">Create a new ingredient in the shared ingredient catalog.</p>
     <form id="ingredient-form" class="form-grid">
       <label>Canonical name *
@@ -930,9 +844,7 @@ function renderAddIngredient() {
       </label>
       <button type="submit" class="button button-primary button-block">${state.loading ? "Creating..." : "Create ingredient"}</button>
     </form>
-  `,
-    "card-soft",
-  );
+  `, "card-soft");
 }
 
 function toIngredientDetailRoute(ingredientId) {
@@ -945,25 +857,18 @@ function renderIngredientsList() {
   }
 
   if (!state.ingredients.length) {
-    return card(
-      "Ingredients list",
-      `
+    return card("Ingredients list", `
       <p class="empty">No ingredients found.</p>
       <div class="actions">
         <a class="button button-primary" href="#/add-ingredient">Add ingredient</a>
       </div>
-    `,
-    );
+    `);
   }
 
-  return card(
-    "Ingredients list",
-    `
+  return card("Ingredients list", `
     <p class="meta">View all ingredients and open one to edit details.</p>
     <ul class="list list-polished">
-      ${state.ingredients
-        .map(
-          (ingredient) => `
+      ${state.ingredients.map((ingredient) => `
         <li>
           <div><strong>${escapeHtml(ingredient.display_name)}</strong></div>
           <div class="meta">${escapeHtml(ingredient.canonical_name)} · Category: ${escapeHtml(ingredient.category || "uncategorized")}</div>
@@ -971,13 +876,9 @@ function renderIngredientsList() {
             <a class="button button-secondary" href="${toIngredientDetailRoute(ingredient.id)}">View details</a>
           </div>
         </li>
-      `,
-        )
-        .join("")}
+      `).join("")}
     </ul>
-  `,
-    "card-soft",
-  );
+  `, "card-soft");
 }
 
 function renderIngredientDetail() {
@@ -989,9 +890,7 @@ function renderIngredientDetail() {
     return card("Ingredient detail", "<p>Loading ingredient details...</p>");
   }
 
-  return card(
-    "Ingredient detail",
-    `
+  return card("Ingredient detail", `
     <p class="meta">Edit or delete this ingredient.</p>
     <form id="ingredient-detail-form" class="form-grid">
       <label>Canonical name *
@@ -1015,9 +914,7 @@ function renderIngredientDetail() {
         <button type="button" id="delete-ingredient" class="button button-danger" ${state.loading ? "disabled" : ""}>Delete ingredient</button>
       </div>
     </form>
-  `,
-    "card-soft",
-  );
+  `, "card-soft");
 }
 
 function toRecipeDetailRoute(recipeId) {
@@ -1030,26 +927,19 @@ function renderRecipesList() {
   }
 
   if (!state.recipes.length) {
-    return card(
-      "Recipes",
-      `
+    return card("Recipes", `
       <p class="empty">No recipes found.</p>
       <div class="actions">
         <a class="button button-primary" href="#/add-recipe">Add recipe</a>
       </div>
-    `,
-    );
+    `);
   }
 
-  return card(
-    "Recipes",
-    `
+  return card("Recipes", `
     <p class="meta">Browse, view, and edit recipes.</p>
     <p class="meta">Total recipes: ${state.recipesMeta.total}</p>
     <ul class="list list-polished">
-      ${state.recipes
-        .map(
-          (recipe) => `
+      ${state.recipes.map((recipe) => `
         <li>
           <div><strong>${escapeHtml(recipe.title)}</strong></div>
           <div class="meta">${escapeHtml(recipe.description || "No description")}</div>
@@ -1057,19 +947,13 @@ function renderRecipesList() {
             <a class="button button-secondary" href="${toRecipeDetailRoute(recipe.id)}">View details</a>
           </div>
         </li>
-      `,
-        )
-        .join("")}
+      `).join("")}
     </ul>
-  `,
-    "card-soft",
-  );
+  `, "card-soft");
 }
 
 function renderAddRecipe() {
-  return card(
-    "Add recipe",
-    `
+  return card("Add recipe", `
     <p class="meta">Create a recipe in the recipe catalogue.</p>
     <form id="recipe-form" class="form-grid">
       <label>Title *
@@ -1090,9 +974,7 @@ function renderAddRecipe() {
       </label>
       <button type="submit" class="button button-primary button-block">${state.loading ? "Creating..." : "Create recipe"}</button>
     </form>
-  `,
-    "card-soft",
-  );
+  `, "card-soft");
 }
 
 function renderRecipeDetail() {
@@ -1104,9 +986,7 @@ function renderRecipeDetail() {
     return card("Recipe detail", "<p>Loading recipe details...</p>");
   }
 
-  return card(
-    "Recipe detail",
-    `
+  return card("Recipe detail", `
     <p class="meta">Edit or delete this recipe.</p>
     <form id="recipe-detail-form" class="form-grid">
       <label>Title *
@@ -1133,9 +1013,7 @@ function renderRecipeDetail() {
         <button type="button" id="delete-recipe" class="button button-danger" ${state.loading ? "disabled" : ""}>Delete recipe</button>
       </div>
     </form>
-  `,
-    "card-soft",
-  );
+  `, "card-soft");
 }
 
 function toShoppingListDetailRoute(shoppingListId) {
@@ -1148,28 +1026,20 @@ function renderShoppingLists() {
   }
 
   if (!state.shoppingLists.length) {
-    return card(
-      "Shopping lists",
-      `
+    return card("Shopping lists", `
       <p class="empty">No shopping lists yet.</p>
       <div class="actions">
         <a class="button button-primary" href="#/add-shopping-list">Create shopping list</a>
       </div>
-    `,
-      "card-soft",
-    );
+    `, "card-soft");
   }
 
-  return card(
-    "Shopping lists",
-    `
+  return card("Shopping lists", `
     <div class="actions actions-quiet">
       <a class="button button-primary" href="#/add-shopping-list">Create shopping list</a>
     </div>
     <ul class="list list-polished">
-      ${state.shoppingLists
-        .map(
-          (list) => `
+      ${state.shoppingLists.map((list) => `
         <li>
           <div><strong>${escapeHtml(list.name)}</strong></div>
           <div class="meta">Status: ${escapeHtml(list.status)} · Updated ${escapeHtml(formatFriendlyDateTime(list.updated_at))}</div>
@@ -1177,19 +1047,13 @@ function renderShoppingLists() {
             <a class="button button-secondary" href="${toShoppingListDetailRoute(list.id)}">Open list</a>
           </div>
         </li>
-      `,
-        )
-        .join("")}
+      `).join("")}
     </ul>
-  `,
-    "card-soft",
-  );
+  `, "card-soft");
 }
 
 function renderAddShoppingList() {
-  return card(
-    "Add shopping list",
-    `
+  return card("Add shopping list", `
     <form id="shopping-list-form" class="form-grid">
       <label>List name *
         <input name="name" required value="${escapeHtml(state.shoppingListForm.name)}" placeholder="e.g. Weekly shop" />
@@ -1202,23 +1066,18 @@ function renderAddShoppingList() {
       </label>
       <button type="submit" class="button button-primary button-block">${state.shoppingListLoading ? "Creating..." : "Create shopping list"}</button>
     </form>
-  `,
-    "card-soft",
-  );
+  `, "card-soft");
 }
 
 function renderShoppingListDetail() {
   if (!state.selectedShoppingListId) {
     return card("Shopping list detail", "<p class='empty'>No shopping list selected.</p>");
   }
-
   if (!state.selectedShoppingList || !state.shoppingListDetailForm) {
     return card("Shopping list detail", "<p>Loading shopping list...</p>");
   }
 
-  return card(
-    "Shopping list detail",
-    `
+  return card("Shopping list detail", `
     <form id="shopping-list-detail-form" class="form-grid">
       <label>List name *
         <input name="name" required value="${escapeHtml(state.shoppingListDetailForm.name)}" />
@@ -1267,12 +1126,10 @@ function renderShoppingListDetail() {
     </form>
     <h3>Items</h3>
     <ul class="list list-polished">
-      ${state.shoppingListItems
-        .map((item) => {
-          const itemTitle = item.ingredient_display_name || item.item_name || item.ingredient_canonical_name || "Untitled item";
-
-          if (state.shoppingListEditingItemId === item.id) {
-            return `
+      ${state.shoppingListItems.map((item) => {
+    const itemTitle = item.ingredient_display_name || item.item_name || item.ingredient_canonical_name || "Untitled item";
+    if (state.shoppingListEditingItemId === item.id) {
+      return `
           <li>
             <form class="form-grid shopping-item-update-form" data-item-id="${item.id}">
               <label>Item name
@@ -1293,9 +1150,8 @@ function renderShoppingListDetail() {
             </form>
           </li>
         `;
-          }
-
-          return `
+    }
+    return `
           <li class="${item.is_checked ? "shopping-item-checked" : ""}">
             <div><strong>${escapeHtml(itemTitle)}</strong></div>
             <div class="meta">${escapeHtml(item.quantity ?? "")} ${escapeHtml(item.unit || "")} ${item.note ? `· ${escapeHtml(item.note)}` : ""}</div>
@@ -1306,12 +1162,9 @@ function renderShoppingListDetail() {
             </div>
           </li>
         `;
-        })
-        .join("")}
+  }).join("")}
     </ul>
-  `,
-    "card-soft",
-  );
+  `, "card-soft");
 }
 
 function attachEvents() {
@@ -1349,17 +1202,14 @@ function attachEvents() {
   if (recipeDetailForm) {
     recipeDetailForm.addEventListener("submit", onSubmitRecipeUpdate);
   }
-
   const shoppingListForm = document.querySelector("#shopping-list-form");
   if (shoppingListForm) {
     shoppingListForm.addEventListener("submit", onSubmitShoppingList);
   }
-
   const shoppingListDetailForm = document.querySelector("#shopping-list-detail-form");
   if (shoppingListDetailForm) {
     shoppingListDetailForm.addEventListener("submit", onSubmitShoppingListUpdate);
   }
-
   const shoppingListItemForm = document.querySelector("#shopping-list-item-form");
   if (shoppingListItemForm) {
     shoppingListItemForm.addEventListener("submit", onSubmitShoppingListItem);
@@ -1388,23 +1238,18 @@ function attachEvents() {
   document.querySelectorAll(".cupboard-delete").forEach((button) => {
     button.addEventListener("click", onDeleteCupboardItem);
   });
-
   document.querySelectorAll(".shopping-item-toggle").forEach((button) => {
     button.addEventListener("click", onToggleShoppingListItem);
   });
-
   document.querySelectorAll(".shopping-item-edit").forEach((button) => {
     button.addEventListener("click", onStartShoppingListItemEdit);
   });
-
   document.querySelectorAll(".shopping-item-cancel-edit").forEach((button) => {
     button.addEventListener("click", onCancelShoppingListItemEdit);
   });
-
   document.querySelectorAll(".shopping-item-update-form").forEach((form) => {
     form.addEventListener("submit", onSubmitShoppingListItemUpdate);
   });
-
   document.querySelectorAll(".shopping-item-delete").forEach((button) => {
     button.addEventListener("click", onDeleteShoppingListItem);
   });
@@ -1445,11 +1290,6 @@ async function onSubmitLogin(event) {
     loadRecipes,
     loadShoppingLists,
   });
-
-  if (isAuthenticated() && state.route === "login") {
-    state.route = state.postLoginRoute || "dashboard";
-    render();
-  }
 }
 
 async function onSubmitFoodEntry(event) {
@@ -1580,109 +1420,54 @@ async function onDeleteRecipe(event) {
     handlePossiblyStaleSession,
   });
 }
-
 async function onSubmitShoppingList(event) {
   await handleSubmitShoppingList(event, {
-    state,
-    render,
-    setFeedback,
-    ensureAuthenticated,
-    currentUserId,
-    createShoppingList,
-    defaultShoppingListForm,
-    loadShoppingLists,
-    handlePossiblyStaleSession,
+    state, render, setFeedback, ensureAuthenticated, currentUserId,
+    createShoppingList, defaultShoppingListForm, loadShoppingLists, handlePossiblyStaleSession,
   });
 }
-
 async function onSubmitShoppingListUpdate(event) {
   await handleSubmitShoppingListUpdate(event, {
-    state,
-    render,
-    setFeedback,
-    ensureAuthenticated,
-    updateShoppingList,
-    loadShoppingListDetail,
-    loadShoppingLists,
-    handlePossiblyStaleSession,
+    state, render, setFeedback, ensureAuthenticated,
+    updateShoppingList, loadShoppingListDetail, loadShoppingLists, handlePossiblyStaleSession,
   });
 }
-
 async function onDeleteShoppingList(event) {
   await handleDeleteShoppingList(event, {
-    state,
-    render,
-    setFeedback,
-    ensureAuthenticated,
-    deleteShoppingList,
-    loadShoppingLists,
-    handlePossiblyStaleSession,
+    state, render, setFeedback, ensureAuthenticated, deleteShoppingList, loadShoppingLists, handlePossiblyStaleSession,
   });
 }
-
 async function onSubmitShoppingListItem(event) {
   await handleSubmitShoppingListItem(event, {
-    state,
-    render,
-    setFeedback,
-    ensureAuthenticated,
-    createShoppingListItem,
-    defaultShoppingListItemForm,
-    loadShoppingListItems,
-    loadShoppingListDetail,
-    handlePossiblyStaleSession,
+    state, render, setFeedback, ensureAuthenticated, createShoppingListItem,
+    defaultShoppingListItemForm, loadShoppingListItems, loadShoppingListDetail, handlePossiblyStaleSession,
   });
 }
-
 async function onSubmitShoppingListItemUpdate(event) {
   await handleSubmitShoppingListItemUpdate(event, {
-    state,
-    render,
-    setFeedback,
-    ensureAuthenticated,
-    updateShoppingListItem,
-    loadShoppingListItems,
-    loadShoppingListDetail,
-    handlePossiblyStaleSession,
+    state, render, setFeedback, ensureAuthenticated, updateShoppingListItem,
+    loadShoppingListItems, loadShoppingListDetail, handlePossiblyStaleSession,
   });
 }
-
 async function onToggleShoppingListItem(event) {
   await handleToggleShoppingListItem(event, {
-    state,
-    render,
-    setFeedback,
-    updateShoppingListItem,
-    loadShoppingListItems,
-    loadShoppingListDetail,
-    handlePossiblyStaleSession,
+    state, render, setFeedback, updateShoppingListItem, loadShoppingListItems, loadShoppingListDetail, handlePossiblyStaleSession,
   });
 }
-
 async function onDeleteShoppingListItem(event) {
   await handleDeleteShoppingListItem(event, {
-    state,
-    render,
-    setFeedback,
-    deleteShoppingListItem,
-    loadShoppingListItems,
-    loadShoppingListDetail,
-    handlePossiblyStaleSession,
+    state, render, setFeedback, deleteShoppingListItem, loadShoppingListItems, loadShoppingListDetail, handlePossiblyStaleSession,
   });
 }
-
 function onStartShoppingListItemEdit(event) {
   handleStartShoppingListItemEdit(event, { state, render });
 }
-
 function onCancelShoppingListItemEdit() {
   handleCancelShoppingListItemEdit({ state, render });
 }
 
 function onLogout() {
   handleLogout({ clearLocalSession, setFeedback, render });
-  state.route = "login";
-  state.postLoginRoute = "dashboard";
 }
 
 function onStartCupboardEdit(event) {
@@ -1726,7 +1511,7 @@ async function loadFoodEntries(renderOnComplete = true) {
   }
 }
 
-async function loadIngredients(renderOnComplete = false) {
+async function loadIngredients() {
   try {
     const ingredientResponse = await getIngredients();
     if (Array.isArray(ingredientResponse)) {
@@ -1740,10 +1525,6 @@ async function loadIngredients(renderOnComplete = false) {
     }
   } catch {
     state.ingredients = [];
-  }
-
-  if (renderOnComplete) {
-    render();
   }
 }
 
@@ -1851,9 +1632,6 @@ async function loadShoppingLists(renderOnComplete = true) {
     if (renderOnComplete) render();
     return;
   }
-
-  state.shoppingListLoading = true;
-
   try {
     const response = await getUserShoppingLists(currentUserId());
     state.shoppingLists = Array.isArray(response) ? response : response?.items || [];
@@ -1862,10 +1640,7 @@ async function loadShoppingLists(renderOnComplete = true) {
     if (!handlePossiblyStaleSession(error)) {
       setFeedback("error", `Could not load shopping lists: ${error.message}`);
     }
-  } finally {
-    state.shoppingListLoading = false;
   }
-
   if (renderOnComplete) render();
 }
 
@@ -1876,7 +1651,6 @@ async function loadShoppingListDetail(shoppingListId, renderOnComplete = true) {
     if (renderOnComplete) render();
     return;
   }
-
   try {
     const list = await getShoppingList(shoppingListId);
     state.selectedShoppingList = list;
@@ -1888,7 +1662,6 @@ async function loadShoppingListDetail(shoppingListId, renderOnComplete = true) {
       setFeedback("error", `Could not load shopping list detail: ${error.message}`);
     }
   }
-
   if (renderOnComplete) render();
 }
 
@@ -1898,7 +1671,6 @@ async function loadShoppingListItems(shoppingListId, renderOnComplete = true) {
     if (renderOnComplete) render();
     return;
   }
-
   try {
     const response = await getShoppingListItems(shoppingListId, { sort_by: "sort_order", sort_dir: "asc" });
     state.shoppingListItems = Array.isArray(response) ? response : response?.items || [];
@@ -1908,7 +1680,6 @@ async function loadShoppingListItems(shoppingListId, renderOnComplete = true) {
       setFeedback("error", `Could not load shopping list items: ${error.message}`);
     }
   }
-
   if (renderOnComplete) render();
 }
 
@@ -1953,12 +1724,6 @@ async function restoreSessionIfPossible() {
     return;
   }
 
-  const storedUser = getStoredUser();
-  if (storedUser) {
-    state.currentUser = storedUser;
-    state.authSubject = storedUser.email || storedUser.user_id || "";
-  }
-
   try {
     const identity = await getCurrentUser();
     state.authSubject = identity.email || identity.user_id || "";
@@ -1972,23 +1737,17 @@ async function restoreSessionIfPossible() {
     clearLocalSession();
     if (!isAuthError(error)) {
       setFeedback("error", "Could not restore your session.");
-    } else {
-      state.route = "login";
-      setFeedback("error", "Your session expired or the saved token is no longer valid. Please sign in again.");
     }
   }
 }
 
 function render() {
-  const hasSessionCandidate = hasStoredSessionCandidate();
-  const protectedRoute = routeRequiresAuth(state.route);
-
-  if (protectedRoute && !hasSessionCandidate) {
+  if (!isAuthenticated()) {
     state.route = "login";
   }
 
   if (isAuthenticated() && state.route === "login") {
-    state.route = state.postLoginRoute || "dashboard";
+    state.route = "dashboard";
   }
 
   let content = "";
@@ -2018,13 +1777,11 @@ function render() {
 
 async function bootstrap() {
   setRouteFromHash();
-
   const hashParams = new URLSearchParams(window.location.hash.split("?")[1] || "");
   state.selectedIngredientId = hashParams.get("id") || "";
   state.selectedRecipeId = hashParams.get("id") || "";
   state.selectedShoppingListId = hashParams.get("id") || "";
-
-  await Promise.all([loadHealth(), loadIngredients(false)]);
+  await Promise.all([loadHealth(), loadIngredients()]);
   await restoreSessionIfPossible();
 
   if (currentUserId()) {
@@ -2038,7 +1795,6 @@ async function bootstrap() {
   if (state.route === "recipe-detail") {
     await loadRecipeById(state.selectedRecipeId, false);
   }
-
   if (state.route === "shopping-list-detail") {
     await Promise.all([
       loadShoppingListDetail(state.selectedShoppingListId, false),
@@ -2051,51 +1807,47 @@ async function bootstrap() {
 
 window.addEventListener("hashchange", async () => {
   try {
-    clearFeedback();
+  setRouteFromHash();
+  const hashParams = new URLSearchParams(window.location.hash.split("?")[1] || "");
+  state.selectedIngredientId = hashParams.get("id") || "";
+  state.selectedRecipeId = hashParams.get("id") || "";
+  state.selectedShoppingListId = hashParams.get("id") || "";
 
-    setRouteFromHash();
+  if (state.route === "entries") {
+    await loadFoodEntries(false);
+  }
 
-    const hashParams = new URLSearchParams(window.location.hash.split("?")[1] || "");
-    state.selectedIngredientId = hashParams.get("id") || "";
-    state.selectedRecipeId = hashParams.get("id") || "";
-    state.selectedShoppingListId = hashParams.get("id") || "";
+  if (state.route === "cupboard") {
+    await loadCupboardItems(false);
+  }
 
-    if (state.route === "entries") {
-      await loadFoodEntries(false);
-    }
+  if (state.route === "ingredients") {
+    await loadIngredients();
+  }
 
-    if (state.route === "cupboard") {
-      await loadCupboardItems(false);
-    }
+  if (state.route === "ingredient-detail") {
+    await loadIngredientById(state.selectedIngredientId, false);
+  }
 
-    if (state.route === "ingredients") {
-      await loadIngredients(false);
-    }
+  if (state.route === "recipes") {
+    await loadRecipes(false);
+  }
 
-    if (state.route === "ingredient-detail") {
-      await loadIngredientById(state.selectedIngredientId, false);
-    }
+  if (state.route === "recipe-detail") {
+    await loadRecipeById(state.selectedRecipeId, false);
+  }
+  if (state.route === "shopping-lists") {
+    await loadShoppingLists(false);
+  }
+  if (state.route === "shopping-list-detail") {
+    await Promise.all([
+      loadShoppingListDetail(state.selectedShoppingListId, false),
+      loadShoppingListItems(state.selectedShoppingListId, false),
+    ]);
+  }
 
-    if (state.route === "recipes") {
-      await loadRecipes(false);
-    }
-
-    if (state.route === "recipe-detail") {
-      await loadRecipeById(state.selectedRecipeId, false);
-    }
-
-    if (state.route === "shopping-lists") {
-      await loadShoppingLists(false);
-    }
-
-    if (state.route === "shopping-list-detail") {
-      await Promise.all([
-        loadShoppingListDetail(state.selectedShoppingListId, false),
-        loadShoppingListItems(state.selectedShoppingListId, false),
-      ]);
-    }
-
-    render();
+  clearFeedback();
+  render();
   } catch (error) {
     setFeedback("error", `App navigation failed: ${error.message}`);
     render();
