@@ -1411,4 +1411,1149 @@ def delete_food_entry(entry_id: UUID, authenticated_user: Dict[str, Any] = Depen
 def list_storecupboard(
     authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user),
     q: Optional[str] = Query(default=None, min_length=1),
-    stock_status: Optional[str]
+    stock_status: Optional[str] = None,
+    shelf_name: Optional[str] = None,
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    sort: str = Query(default="updated_at"),
+    order: str = Query(default="desc"),
+):
+    sort_map = {
+        "updated_at": "s.updated_at",
+        "created_at": "s.created_at",
+        "stock_status": "s.stock_status",
+        "ingredient": "i.display_name",
+        "quantity": "s.quantity",
+    }
+    sort_column = sort_map.get(sort, "s.updated_at")
+    order_direction = "desc" if order.lower() == "desc" else "asc"
+    where_clauses = ["s.user_id = %s"]
+    params: List[Any] = [str(authenticated_user["user_id"])]
+
+    if q:
+        where_clauses.append(
+            "(i.display_name ILIKE %s OR i.canonical_name ILIKE %s OR coalesce(s.shelf_name, '') ILIKE %s)"
+        )
+        q_like = f"%{q.strip()}%"
+        params.extend([q_like, q_like, q_like])
+    if stock_status:
+        where_clauses.append("s.stock_status::text = %s")
+        params.append(stock_status)
+    if shelf_name:
+        where_clauses.append("coalesce(s.shelf_name, '') ILIKE %s")
+        params.append(f"%{shelf_name.strip()}%")
+
+    where_sql = f"where {' and '.join(where_clauses)}"
+
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    select count(*)
+                    from user_storecupboard_items s
+                    join ingredient_catalogue i on i.id = s.ingredient_id
+                    {where_sql}
+                    """,
+                    tuple(params),
+                )
+                total = cur.fetchone()[0]
+
+                cur.execute(
+                    f"""
+                    select
+                        s.id,
+                        s.user_id,
+                        s.ingredient_id,
+                        s.quantity,
+                        s.unit,
+                        s.stock_status::text,
+                        s.shelf_name,
+                        i.display_name,
+                        i.canonical_name
+                    from user_storecupboard_items s
+                    join ingredient_catalogue i on i.id = s.ingredient_id
+                    {where_sql}
+                    order by {sort_column} {order_direction}, s.id asc
+                    limit %s
+                    offset %s
+                    """,
+                    tuple(params + [limit, offset]),
+                )
+                rows = cur.fetchall()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not load storecupboard items.")
+
+    return {
+        "items": [
+            {
+                "id": row[0],
+                "user_id": row[1],
+                "ingredient_id": row[2],
+                "quantity": row[3],
+                "unit": row[4],
+                "stock_status": row[5],
+                "shelf_name": row[6],
+                "ingredient_display_name": row[7],
+                "ingredient_canonical_name": row[8],
+            }
+            for row in rows
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@app.get("/users/{user_id}/storecupboard", response_model=List[StorecupboardItemOut])
+def list_user_storecupboard_items(
+    user_id: UUID,
+    authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user),
+):
+    enforce_path_user(user_id, authenticated_user)
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    select
+                        s.id,
+                        s.user_id,
+                        s.ingredient_id,
+                        s.quantity::float8,
+                        s.unit,
+                        s.stock_status::text,
+                        s.shelf_name,
+                        i.display_name,
+                        i.canonical_name
+                    from user_storecupboard_items s
+                    join ingredient_catalogue i on i.id = s.ingredient_id
+                    where s.user_id = %s
+                    order by i.display_name asc, s.id asc
+                    """,
+                    (str(user_id),),
+                )
+                rows = cur.fetchall()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not load user storecupboard items.")
+
+    return [
+        {
+            "id": row[0],
+            "user_id": row[1],
+            "ingredient_id": row[2],
+            "quantity": row[3],
+            "unit": row[4],
+            "stock_status": row[5],
+            "shelf_name": row[6],
+            "ingredient_display_name": row[7],
+            "ingredient_canonical_name": row[8],
+        }
+        for row in rows
+    ]
+
+
+@app.post("/users/{user_id}/storecupboard", response_model=StorecupboardItemOut)
+def create_user_storecupboard_item(
+    user_id: UUID,
+    payload: NestedStorecupboardItemCreate,
+    authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user),
+):
+    enforce_path_user(user_id, authenticated_user)
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    insert into user_storecupboard_items (
+                        user_id,
+                        ingredient_id,
+                        quantity,
+                        unit,
+                        stock_status,
+                        shelf_name
+                    )
+                    values (%s, %s, %s, %s, %s::stock_status, %s)
+                    returning
+                        id,
+                        user_id,
+                        ingredient_id,
+                        quantity::float8,
+                        unit,
+                        stock_status::text,
+                        shelf_name
+                    """,
+                    (
+                        str(user_id),
+                        str(payload.ingredient_id),
+                        payload.quantity,
+                        payload.unit,
+                        payload.stock_status,
+                        payload.shelf_name,
+                    ),
+                )
+                row = cur.fetchone()
+
+                cur.execute(
+                    """
+                    select display_name, canonical_name
+                    from ingredient_catalogue
+                    where id = %s
+                    """,
+                    (str(payload.ingredient_id),),
+                )
+                ingredient = cur.fetchone()
+            conn.commit()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not create user storecupboard item.")
+
+    return {
+        "id": row[0],
+        "user_id": row[1],
+        "ingredient_id": row[2],
+        "quantity": row[3],
+        "unit": row[4],
+        "stock_status": row[5],
+        "shelf_name": row[6],
+        "ingredient_display_name": ingredient[0] if ingredient else None,
+        "ingredient_canonical_name": ingredient[1] if ingredient else None,
+    }
+
+
+@app.put("/users/{user_id}/storecupboard/{item_id}", response_model=StorecupboardItemOut)
+def update_user_storecupboard_item(
+    user_id: UUID,
+    item_id: UUID,
+    payload: StorecupboardItemUpdate,
+    authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user),
+):
+    enforce_path_user(user_id, authenticated_user)
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    update user_storecupboard_items s
+                    set
+                        quantity = coalesce(%s, s.quantity),
+                        unit = coalesce(%s, s.unit),
+                        stock_status = coalesce(%s::stock_status, s.stock_status),
+                        shelf_name = coalesce(%s, s.shelf_name),
+                        updated_at = now()
+                    where s.id = %s and s.user_id = %s
+                    returning
+                        s.id,
+                        s.user_id,
+                        s.ingredient_id,
+                        s.quantity::float8,
+                        s.unit,
+                        s.stock_status::text,
+                        s.shelf_name
+                    """,
+                    (
+                        payload.quantity,
+                        payload.unit,
+                        payload.stock_status,
+                        payload.shelf_name,
+                        str(item_id),
+                        str(user_id),
+                    ),
+                )
+                row = cur.fetchone()
+
+                if row:
+                    cur.execute(
+                        """
+                        select display_name, canonical_name
+                        from ingredient_catalogue
+                        where id = %s
+                        """,
+                        (str(row[2]),),
+                    )
+                    ingredient = cur.fetchone()
+                else:
+                    ingredient = None
+            conn.commit()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not update user storecupboard item.")
+
+    if not row:
+        not_found("Storecupboard item not found.")
+
+    return {
+        "id": row[0],
+        "user_id": row[1],
+        "ingredient_id": row[2],
+        "quantity": row[3],
+        "unit": row[4],
+        "stock_status": row[5],
+        "shelf_name": row[6],
+        "ingredient_display_name": ingredient[0] if ingredient else None,
+        "ingredient_canonical_name": ingredient[1] if ingredient else None,
+    }
+
+
+@app.delete("/users/{user_id}/storecupboard/{item_id}")
+def delete_user_storecupboard_item(
+    user_id: UUID,
+    item_id: UUID,
+    authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user),
+):
+    enforce_path_user(user_id, authenticated_user)
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    delete from user_storecupboard_items
+                    where id = %s and user_id = %s
+                    returning id
+                    """,
+                    (str(item_id), str(user_id)),
+                )
+                row = cur.fetchone()
+            conn.commit()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not delete user storecupboard item.")
+
+    if not row:
+        not_found("Storecupboard item not found.")
+
+    return {"deleted": True, "id": row[0]}
+
+
+# -------------------------------------------------------------------
+# Tags
+# -------------------------------------------------------------------
+
+
+@app.get("/tags", response_model=List[TagOut])
+def list_tags():
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    select
+                        id,
+                        slug,
+                        label,
+                        description,
+                        colour_hex,
+                        is_system,
+                        display_order
+                    from tag_definitions
+                    order by coalesce(display_order, 999999), label asc
+                    """
+                )
+                rows = cur.fetchall()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not load tags.")
+
+    return [
+        {
+            "id": row[0],
+            "slug": row[1],
+            "label": row[2],
+            "description": row[3],
+            "colour_hex": row[4],
+            "is_system": row[5],
+            "display_order": row[6],
+        }
+        for row in rows
+    ]
+
+
+@app.post("/tags", response_model=TagOut)
+def create_tag(payload: TagCreate):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    insert into tag_definitions (
+                        slug,
+                        label,
+                        description,
+                        colour_hex,
+                        is_system,
+                        display_order
+                    )
+                    values (%s, %s, %s, %s, %s, %s)
+                    returning
+                        id,
+                        slug,
+                        label,
+                        description,
+                        colour_hex,
+                        is_system,
+                        display_order
+                    """,
+                    (
+                        payload.slug.strip().lower(),
+                        payload.label.strip(),
+                        payload.description,
+                        payload.colour_hex,
+                        payload.is_system,
+                        payload.display_order,
+                    ),
+                )
+                row = cur.fetchone()
+            conn.commit()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not create tag.")
+
+    return {
+        "id": row[0],
+        "slug": row[1],
+        "label": row[2],
+        "description": row[3],
+        "colour_hex": row[4],
+        "is_system": row[5],
+        "display_order": row[6],
+    }
+
+
+@app.get("/tags/{tag_id}", response_model=TagOut)
+def get_tag(tag_id: UUID):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    select
+                        id,
+                        slug,
+                        label,
+                        description,
+                        colour_hex,
+                        is_system,
+                        display_order
+                    from tag_definitions
+                    where id = %s
+                    limit 1
+                    """,
+                    (str(tag_id),),
+                )
+                row = cur.fetchone()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not load tag.")
+
+    if not row:
+        not_found("Tag not found.")
+
+    return {
+        "id": row[0],
+        "slug": row[1],
+        "label": row[2],
+        "description": row[3],
+        "colour_hex": row[4],
+        "is_system": row[5],
+        "display_order": row[6],
+    }
+
+
+@app.put("/tags/{tag_id}", response_model=TagOut)
+def update_tag(tag_id: UUID, payload: TagUpdate):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    update tag_definitions
+                    set
+                        slug = coalesce(%s, slug),
+                        label = coalesce(%s, label),
+                        description = coalesce(%s, description),
+                        colour_hex = coalesce(%s, colour_hex),
+                        is_system = coalesce(%s, is_system),
+                        display_order = coalesce(%s, display_order)
+                    where id = %s
+                    returning
+                        id,
+                        slug,
+                        label,
+                        description,
+                        colour_hex,
+                        is_system,
+                        display_order
+                    """,
+                    (
+                        payload.slug.strip().lower() if payload.slug else None,
+                        payload.label.strip() if payload.label else None,
+                        payload.description,
+                        payload.colour_hex,
+                        payload.is_system,
+                        payload.display_order,
+                        str(tag_id),
+                    ),
+                )
+                row = cur.fetchone()
+            conn.commit()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not update tag.")
+
+    if not row:
+        not_found("Tag not found.")
+
+    return {
+        "id": row[0],
+        "slug": row[1],
+        "label": row[2],
+        "description": row[3],
+        "colour_hex": row[4],
+        "is_system": row[5],
+        "display_order": row[6],
+    }
+
+
+@app.delete("/tags/{tag_id}")
+def delete_tag(tag_id: UUID):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    delete from tag_definitions
+                    where id = %s
+                    returning id
+                    """,
+                    (str(tag_id),),
+                )
+                row = cur.fetchone()
+            conn.commit()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not delete tag.")
+
+    if not row:
+        not_found("Tag not found.")
+
+    return {"deleted": True, "id": row[0]}
+
+
+# -------------------------------------------------------------------
+# Recipes
+# -------------------------------------------------------------------
+
+
+@app.get("/recipes", response_model=RecipeListResponse)
+def list_recipes(
+    q: Optional[str] = Query(default=None, min_length=1),
+    created_by_user_id: Optional[UUID] = None,
+    is_system: Optional[bool] = None,
+    from_date: Optional[str] = Query(default=None, alias="from"),
+    to_date: Optional[str] = Query(default=None, alias="to"),
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    sort: str = Query(default="created_at"),
+    order: str = Query(default="desc"),
+):
+    sort_map = {
+        "title": "title",
+        "created_at": "created_at",
+        "updated_at": "updated_at",
+    }
+    sort_column = sort_map.get(sort, "created_at")
+    order_direction = "desc" if order.lower() == "desc" else "asc"
+    where_clauses = []
+    params: List[Any] = []
+
+    if q:
+        where_clauses.append("(title ILIKE %s OR coalesce(description, '') ILIKE %s)")
+        q_like = f"%{q.strip()}%"
+        params.extend([q_like, q_like])
+    if created_by_user_id:
+        where_clauses.append("created_by_user_id = %s")
+        params.append(str(created_by_user_id))
+    if is_system is not None:
+        where_clauses.append("is_system = %s")
+        params.append(is_system)
+    if from_date:
+        where_clauses.append("created_at >= %s::timestamptz")
+        params.append(from_date)
+    if to_date:
+        where_clauses.append("created_at <= %s::timestamptz")
+        params.append(to_date)
+
+    where_sql = f"where {' and '.join(where_clauses)}" if where_clauses else ""
+
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    select count(*)
+                    from recipe_catalogue
+                    {where_sql}
+                    """,
+                    tuple(params),
+                )
+                total = cur.fetchone()[0]
+
+                cur.execute(
+                    f"""
+                    select
+                        id,
+                        title,
+                        description,
+                        instructions,
+                        source_url,
+                        created_by_user_id,
+                        is_system
+                    from recipe_catalogue
+                    {where_sql}
+                    order by {sort_column} {order_direction}, id asc
+                    limit %s
+                    offset %s
+                    """,
+                    tuple(params + [limit, offset]),
+                )
+                rows = cur.fetchall()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not load recipes.")
+
+    return {
+        "items": [
+            {
+                "id": row[0],
+                "title": row[1],
+                "description": row[2],
+                "instructions": row[3],
+                "source_url": row[4],
+                "created_by_user_id": row[5],
+                "is_system": row[6],
+            }
+            for row in rows
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@app.post("/recipes", response_model=RecipeOut)
+def create_recipe(payload: RecipeCreate):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    insert into recipe_catalogue (
+                        title,
+                        description,
+                        instructions,
+                        source_url,
+                        created_by_user_id,
+                        is_system
+                    )
+                    values (%s, %s, %s, %s, %s, %s)
+                    returning
+                        id,
+                        title,
+                        description,
+                        instructions,
+                        source_url,
+                        created_by_user_id,
+                        is_system
+                    """,
+                    (
+                        payload.title.strip(),
+                        payload.description,
+                        payload.instructions,
+                        payload.source_url,
+                        str(payload.created_by_user_id) if payload.created_by_user_id else None,
+                        payload.is_system,
+                    ),
+                )
+                row = cur.fetchone()
+            conn.commit()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not create recipe.")
+
+    return {
+        "id": row[0],
+        "title": row[1],
+        "description": row[2],
+        "instructions": row[3],
+        "source_url": row[4],
+        "created_by_user_id": row[5],
+        "is_system": row[6],
+    }
+
+
+@app.get("/recipes/{recipe_id}", response_model=RecipeOut)
+def get_recipe(recipe_id: UUID):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    select
+                        id,
+                        title,
+                        description,
+                        instructions,
+                        source_url,
+                        created_by_user_id,
+                        is_system
+                    from recipe_catalogue
+                    where id = %s
+                    limit 1
+                    """,
+                    (str(recipe_id),),
+                )
+                row = cur.fetchone()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not load recipe.")
+
+    if not row:
+        not_found("Recipe not found.")
+
+    return {
+        "id": row[0],
+        "title": row[1],
+        "description": row[2],
+        "instructions": row[3],
+        "source_url": row[4],
+        "created_by_user_id": row[5],
+        "is_system": row[6],
+    }
+
+
+@app.put("/recipes/{recipe_id}", response_model=RecipeOut)
+def update_recipe(recipe_id: UUID, payload: RecipeUpdate):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    update recipe_catalogue
+                    set
+                        title = coalesce(%s, title),
+                        description = coalesce(%s, description),
+                        instructions = coalesce(%s, instructions),
+                        source_url = coalesce(%s, source_url),
+                        created_by_user_id = coalesce(%s, created_by_user_id),
+                        is_system = coalesce(%s, is_system),
+                        updated_at = now()
+                    where id = %s
+                    returning
+                        id,
+                        title,
+                        description,
+                        instructions,
+                        source_url,
+                        created_by_user_id,
+                        is_system
+                    """,
+                    (
+                        payload.title.strip() if payload.title else None,
+                        payload.description,
+                        payload.instructions,
+                        payload.source_url,
+                        str(payload.created_by_user_id) if payload.created_by_user_id else None,
+                        payload.is_system,
+                        str(recipe_id),
+                    ),
+                )
+                row = cur.fetchone()
+            conn.commit()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not update recipe.")
+
+    if not row:
+        not_found("Recipe not found.")
+
+    return {
+        "id": row[0],
+        "title": row[1],
+        "description": row[2],
+        "instructions": row[3],
+        "source_url": row[4],
+        "created_by_user_id": row[5],
+        "is_system": row[6],
+    }
+
+
+@app.delete("/recipes/{recipe_id}")
+def delete_recipe(recipe_id: UUID):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    delete from recipe_catalogue
+                    where id = %s
+                    returning id
+                    """,
+                    (str(recipe_id),),
+                )
+                row = cur.fetchone()
+            conn.commit()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not delete recipe.")
+
+    if not row:
+        not_found("Recipe not found.")
+
+    return {"deleted": True, "id": row[0]}
+
+
+# -------------------------------------------------------------------
+# AI suggestions
+# -------------------------------------------------------------------
+
+
+@app.get("/ai-suggestions", response_model=List[AISuggestionOut])
+def list_ai_suggestions(authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user)):
+    where_sql = "where user_id = %s"
+    params = (str(authenticated_user["user_id"]),)
+
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    select
+                        id,
+                        user_id,
+                        suggestion_type::text,
+                        title,
+                        body,
+                        created_at::text
+                    from ai_suggestions
+                    {where_sql}
+                    order by created_at desc
+                    """,
+                    params,
+                )
+                rows = cur.fetchall()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not load AI suggestions.")
+
+    return [
+        {
+            "id": row[0],
+            "user_id": row[1],
+            "suggestion_type": row[2],
+            "title": row[3],
+            "body": row[4],
+            "created_at": row[5],
+        }
+        for row in rows
+    ]
+
+
+@app.get("/users/{user_id}/ai-suggestions", response_model=List[AISuggestionOut])
+def list_user_ai_suggestions(
+    user_id: UUID,
+    authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user),
+):
+    enforce_path_user(user_id, authenticated_user)
+    return list_ai_suggestions(authenticated_user=authenticated_user)
+
+
+@app.post("/users/{user_id}/ai-suggestions", response_model=AISuggestionOut)
+def create_user_ai_suggestion(
+    user_id: UUID,
+    payload: NestedAISuggestionCreate,
+    authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user),
+):
+    enforce_path_user(user_id, authenticated_user)
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    insert into ai_suggestions (
+                        user_id,
+                        suggestion_type,
+                        title,
+                        body
+                    )
+                    values (%s, %s::suggestion_type, %s, %s)
+                    returning
+                        id,
+                        user_id,
+                        suggestion_type::text,
+                        title,
+                        body,
+                        created_at::text
+                    """,
+                    (
+                        str(user_id),
+                        payload.suggestion_type,
+                        payload.title.strip(),
+                        payload.body.strip(),
+                    ),
+                )
+                row = cur.fetchone()
+            conn.commit()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not create user AI suggestion.")
+
+    return {
+        "id": row[0],
+        "user_id": row[1],
+        "suggestion_type": row[2],
+        "title": row[3],
+        "body": row[4],
+        "created_at": row[5],
+    }
+
+
+@app.get("/ai-suggestions/{suggestion_id}", response_model=AISuggestionOut)
+def get_ai_suggestion(
+    suggestion_id: UUID,
+    authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user),
+):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    select
+                        id,
+                        user_id,
+                        suggestion_type::text,
+                        title,
+                        body,
+                        created_at::text
+                    from ai_suggestions
+                    where id = %s and user_id = %s
+                    limit 1
+                    """,
+                    (str(suggestion_id), str(authenticated_user["user_id"])),
+                )
+                row = cur.fetchone()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not load AI suggestion.")
+
+    if not row:
+        not_found("AI suggestion not found.")
+
+    return {
+        "id": row[0],
+        "user_id": row[1],
+        "suggestion_type": row[2],
+        "title": row[3],
+        "body": row[4],
+        "created_at": row[5],
+    }
+
+
+@app.put("/ai-suggestions/{suggestion_id}", response_model=AISuggestionOut)
+def update_ai_suggestion(
+    suggestion_id: UUID,
+    payload: AISuggestionUpdate,
+    authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user),
+):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    update ai_suggestions
+                    set
+                        suggestion_type = coalesce(%s::suggestion_type, suggestion_type),
+                        title = coalesce(%s, title),
+                        body = coalesce(%s, body)
+                    where id = %s and user_id = %s
+                    returning
+                        id,
+                        user_id,
+                        suggestion_type::text,
+                        title,
+                        body,
+                        created_at::text
+                    """,
+                    (
+                        payload.suggestion_type,
+                        payload.title.strip() if payload.title else None,
+                        payload.body.strip() if payload.body else None,
+                        str(suggestion_id),
+                        str(authenticated_user["user_id"]),
+                    ),
+                )
+                row = cur.fetchone()
+            conn.commit()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not update AI suggestion.")
+
+    if not row:
+        not_found("AI suggestion not found.")
+
+    return {
+        "id": row[0],
+        "user_id": row[1],
+        "suggestion_type": row[2],
+        "title": row[3],
+        "body": row[4],
+        "created_at": row[5],
+    }
+
+
+@app.delete("/ai-suggestions/{suggestion_id}")
+def delete_ai_suggestion(
+    suggestion_id: UUID,
+    authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user),
+):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    delete from ai_suggestions
+                    where id = %s and user_id = %s
+                    returning id
+                    """,
+                    (str(suggestion_id), str(authenticated_user["user_id"])),
+                )
+                row = cur.fetchone()
+            conn.commit()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not delete AI suggestion.")
+
+    if not row:
+        not_found("AI suggestion not found.")
+
+    return {"deleted": True, "id": row[0]}
+
+
+# -------------------------------------------------------------------
+# App events
+# -------------------------------------------------------------------
+
+
+@app.get("/app-events", response_model=List[AppEventOut])
+def list_app_events(authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user)):
+    where_sql = "where user_id = %s"
+    params = (str(authenticated_user["user_id"]),)
+
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    select
+                        id,
+                        user_id,
+                        event_name,
+                        payload,
+                        created_at::text
+                    from app_events
+                    {where_sql}
+                    order by created_at desc
+                    """,
+                    params,
+                )
+                rows = cur.fetchall()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not load app events.")
+
+    return [
+        {
+            "id": row[0],
+            "user_id": row[1],
+            "event_name": row[2],
+            "payload": row[3],
+            "created_at": row[4],
+        }
+        for row in rows
+    ]
+
+
+@app.get("/users/{user_id}/app-events", response_model=List[AppEventOut])
+def list_user_app_events(
+    user_id: UUID,
+    authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user),
+):
+    enforce_path_user(user_id, authenticated_user)
+    return list_app_events(authenticated_user=authenticated_user)
+
+
+@app.post("/app-events", response_model=AppEventOut)
+def create_app_event(
+    payload: AppEventCreate,
+    authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_user),
+):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    insert into app_events (
+                        user_id,
+                        event_name,
+                        payload
+                    )
+                    values (%s, %s, %s)
+                    returning
+                        id,
+                        user_id,
+                        event_name,
+                        payload,
+                        created_at::text
+                    """,
+                    (
+                        str(authenticated_user["user_id"]),
+                        payload.event_name.strip(),
+                        payload.payload,
+                    ),
+                )
+                row = cur.fetchone()
+            conn.commit()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not create app event.")
+
+    return {
+        "id": row[0],
+        "user_id": row[1],
+        "event_name": row[2],
+        "payload": row[3],
+        "created_at": row[4],
+    }
