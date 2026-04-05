@@ -565,7 +565,7 @@ async function onSubmitLogin(event) {
 
     storeAccessToken(response.access_token);
 
-    const identity = await getCurrentUser(response.email || response.user_id);
+    const identity = await getCurrentUser(response.access_token);
 
     state.authSubject = response.email || response.user_id || "";
     state.currentUser = {
