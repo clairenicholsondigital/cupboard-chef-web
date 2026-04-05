@@ -905,13 +905,6 @@ function renderIngredientDetail() {
       <label>Category *
         <input name="category" value="${escapeHtml(state.ingredientDetailForm.category)}" required />
       </label>
-      <label class="inline-checkbox">
-        <input name="is_seasonal" type="checkbox" ${state.ingredientDetailForm.is_seasonal ? "checked" : ""} />
-        Is seasonal
-      </label>
-      <label>Seasonal months
-        <input name="seasonal_months" value="${escapeHtml(state.ingredientDetailForm.seasonal_months)}" placeholder="comma-separated months, e.g. 6,7,8,9" />
-      </label>
       <div class="actions">
         <button type="submit" class="button button-primary">${state.loading ? "Saving..." : "Save changes"}</button>
         <button type="button" id="delete-ingredient" class="button button-danger" ${state.loading ? "disabled" : ""}>Delete ingredient</button>
@@ -971,10 +964,6 @@ function renderAddRecipe() {
       <label>Source URL
         <input name="source_url" type="url" value="${escapeHtml(state.recipeForm.source_url)}" placeholder="https://example.com/recipe" />
       </label>
-      <label class="inline-checkbox">
-        <input name="is_system" type="checkbox" ${state.recipeForm.is_system ? "checked" : ""} />
-        System recipe
-      </label>
       <button type="submit" class="button button-primary button-block">${state.loading ? "Creating..." : "Create recipe"}</button>
     </form>
   `, "card-soft");
@@ -1003,13 +992,6 @@ function renderRecipeDetail() {
       </label>
       <label>Source URL
         <input name="source_url" type="url" value="${escapeHtml(state.recipeDetailForm.source_url)}" placeholder="https://example.com/recipe" />
-      </label>
-      <label>Created by user UUID (optional)
-        <input name="created_by_user_id" value="${escapeHtml(state.recipeDetailForm.created_by_user_id)}" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
-      </label>
-      <label class="inline-checkbox">
-        <input name="is_system" type="checkbox" ${state.recipeDetailForm.is_system ? "checked" : ""} />
-        System recipe
       </label>
       <div class="actions">
         <button type="submit" class="button button-primary">${state.loading ? "Saving..." : "Save changes"}</button>
@@ -1406,6 +1388,7 @@ async function onSubmitRecipeUpdate(event) {
     render,
     setFeedback,
     ensureAuthenticated,
+    currentUserId,
     updateRecipe,
     loadRecipeById,
     handlePossiblyStaleSession,

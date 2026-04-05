@@ -1,6 +1,9 @@
 function parseIngredientForm(formData) {
-  const isSeasonal = formData.get("is_seasonal") === "on";
-  const seasonalMonthsRaw = (formData.get("seasonal_months") || "").toString().trim();
+  const hasSeasonalFields = formData.has("is_seasonal") || formData.has("seasonal_months");
+  const isSeasonal = hasSeasonalFields ? formData.get("is_seasonal") === "on" : null;
+  const seasonalMonthsRaw = hasSeasonalFields
+    ? (formData.get("seasonal_months") || "").toString().trim()
+    : "";
   const seasonalMonths = seasonalMonthsRaw
     ? seasonalMonthsRaw
       .split(",")
@@ -12,8 +15,8 @@ function parseIngredientForm(formData) {
     canonical_name: (formData.get("canonical_name") || "").toString().trim(),
     display_name: (formData.get("display_name") || "").toString().trim(),
     category: (formData.get("category") || "").toString().trim(),
-    is_seasonal: isSeasonal,
-    seasonal_months: isSeasonal ? seasonalMonths : [],
+    is_seasonal: hasSeasonalFields ? isSeasonal : null,
+    seasonal_months: hasSeasonalFields ? (isSeasonal ? seasonalMonths : []) : null,
   };
 
   return { payload, seasonalMonthsRaw, seasonalMonths, isSeasonal };
