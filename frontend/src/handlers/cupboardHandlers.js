@@ -41,6 +41,8 @@ export async function handleSubmitCupboardItem(event, deps) {
     unit: (formData.get("unit") || "").toString().trim() || null,
     stock_status: (formData.get("stock_status") || "in_stock").toString(),
     shelf_name: (formData.get("shelf_name") || "").toString().trim() || null,
+    best_before_date: (formData.get("best_before_date") || "").toString().trim() || null,
+    next_reminder_at: (formData.get("next_reminder_at") || "").toString().trim() || null,
   };
 
   state.cupboardForm = {
@@ -49,6 +51,8 @@ export async function handleSubmitCupboardItem(event, deps) {
     unit: payload.unit || "",
     stock_status: payload.stock_status,
     shelf_name: payload.shelf_name || "",
+    best_before_date: payload.best_before_date || "",
+    next_reminder_at: payload.next_reminder_at || "",
   };
 
   if (!payload.ingredient_id) {
@@ -113,6 +117,8 @@ export async function handleSubmitCupboardUpdate(event, deps) {
     unit: (formData.get("unit") || "").toString().trim() || null,
     stock_status: (formData.get("stock_status") || "").toString() || null,
     shelf_name: (formData.get("shelf_name") || "").toString().trim() || null,
+    best_before_date: (formData.get("best_before_date") || "").toString().trim() || null,
+    next_reminder_at: (formData.get("next_reminder_at") || "").toString().trim() || null,
   };
 
   try {
