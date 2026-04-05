@@ -12,6 +12,7 @@ export async function handleSubmitLogin(event, deps) {
     storeCurrentUser,
     loadFoodEntries,
     loadCupboardItems,
+    loadRecipes,
   } = deps;
 
   event.preventDefault();
@@ -55,7 +56,7 @@ export async function handleSubmitLogin(event, deps) {
     storeCurrentUser(state.currentUser);
 
     setFeedback("success", `Signed in as ${identity.email}.`);
-    await Promise.all([loadFoodEntries(false), loadCupboardItems(false)]);
+    await Promise.all([loadFoodEntries(false), loadCupboardItems(false), loadRecipes?.(false)]);
   } catch (error) {
     clearLocalSession();
     setFeedback("error", getLoginErrorMessage(error));

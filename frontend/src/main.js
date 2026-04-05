@@ -1,10 +1,14 @@
 import {
   ApiError,
+  createRecipe,
   createIngredient,
   deleteIngredient,
+  deleteRecipe,
   createUserFoodEntry,
   createUserStorecupboardItem,
   getIngredient,
+  getRecipe,
+  getRecipes,
   deleteUserStorecupboardItem,
   getApiBaseUrl,
   getCurrentUser,
@@ -13,6 +17,7 @@ import {
   getUserStorecupboardItems,
   healthCheck,
   loginWithEmail,
+  updateRecipe,
   updateIngredient,
   updateUserStorecupboardItem,
 } from "./api.js";
@@ -32,6 +37,11 @@ import {
   handleSubmitIngredient,
   handleSubmitIngredientUpdate,
 } from "./handlers/ingredientHandlers.js";
+import {
+  handleDeleteRecipe,
+  handleSubmitRecipe,
+  handleSubmitRecipeUpdate,
+} from "./handlers/recipeHandlers.js";
 
 const mealTimeOptions = ["am", "breakfast", "lunch", "pm", "dinner", "evening", "snack", "late_night"];
 const inputMethodOptions = ["text", "voice", "imported"];
@@ -75,6 +85,15 @@ const defaultIngredientForm = () => ({
   seasonal_months: "",
 });
 
+const defaultRecipeForm = () => ({
+  title: "",
+  description: "",
+  instructions: "",
+  source_url: "",
+  created_by_user_id: "",
+  is_system: false,
+});
+
 const state = {
   route: "dashboard",
   error: "",
@@ -83,6 +102,8 @@ const state = {
   authSubject: "",
   foodEntries: [],
   ingredients: [],
+  recipes: [],
+  recipesMeta: { total: 0, limit: 25, offset: 0 },
   cupboardItems: [],
   cupboardLoading: false,
   cupboardLoaded: false,
@@ -92,9 +113,13 @@ const state = {
   foodForm: defaultFoodForm(),
   cupboardForm: defaultCupboardForm(),
   ingredientForm: defaultIngredientForm(),
+  recipeForm: defaultRecipeForm(),
   ingredientDetailForm: null,
+  recipeDetailForm: null,
   selectedIngredientId: "",
+  selectedRecipeId: "",
   selectedIngredient: null,
+  selectedRecipe: null,
   authForm: {
     email: "",
     password: "",
@@ -182,6 +207,8 @@ function clearLocalSession() {
   state.currentUser = null;
   state.authSubject = "";
   state.foodEntries = [];
+  state.recipes = [];
+  state.recipesMeta = { total: 0, limit: 25, offset: 0 };
   state.cupboardItems = [];
   state.cupboardLoaded = false;
   state.cupboardLoading = false;
@@ -189,6 +216,9 @@ function clearLocalSession() {
   state.cupboardError = "";
   state.cupboardSuccess = "";
   state.cupboardEditingId = "";
+  state.selectedRecipeId = "";
+  state.selectedRecipe = null;
+  state.recipeDetailForm = null;
   clearStoredAccessToken();
   clearStoredCurrentUser();
 }
@@ -253,6 +283,9 @@ function setRouteFromHash() {
     "/entries": "entries",
     "/cupboard": "cupboard",
     "/add-cupboard-item": "add-cupboard-item",
+    "/recipes": "recipes",
+    "/add-recipe": "add-recipe",
+    "/recipe-detail": "recipe-detail",
   };
 
   state.route = pathnameRouteMap[window.location.pathname] || "dashboard";
@@ -282,6 +315,8 @@ function renderLayout(content) {
       ${navLink("add-cupboard-item", "Add cupboard item")}
       ${navLink("add-ingredient", "Add ingredient")}
       ${navLink("ingredients", "Ingredients list")}
+      ${navLink("recipes", "Recipes")}
+      ${navLink("add-recipe", "Add recipe")}
     </nav>
     <section class="settings card">
       <h2>Session</h2>
@@ -338,6 +373,8 @@ function renderDashboard() {
         <a class="button secondary" href="#/add-cupboard-item">Add cupboard item</a>
         <a class="button secondary" href="#/add-ingredient">Add ingredient</a>
         <a class="button secondary" href="#/ingredients">Ingredients list</a>
+        <a class="button secondary" href="#/recipes">Recipes</a>
+        <a class="button secondary" href="#/add-recipe">Add recipe</a>
       </div>
     `)}
     ${card("Recent food entries", previewHtml)}
@@ -604,6 +641,108 @@ function renderIngredientDetail() {
   `);
 }
 
+function toRecipeDetailRoute(recipeId) {
+  return `#/recipe-detail?id=${encodeURIComponent(recipeId)}`;
+}
+
+function renderRecipesList() {
+  if (state.loading && !state.recipes.length) {
+    return card("Recipes", "<p>Loading recipes...</p>");
+  }
+
+  if (!state.recipes.length) {
+    return card("Recipes", `
+      <p class="empty">No recipes found.</p>
+      <div class="actions">
+        <a class="button" href="#/add-recipe">Add recipe</a>
+      </div>
+    `);
+  }
+
+  return card("Recipes", `
+    <p class="meta">Browse, view, and edit recipes.</p>
+    <p class="meta">Total recipes: ${state.recipesMeta.total}</p>
+    <ul class="list">
+      ${state.recipes.map((recipe) => `
+        <li>
+          <div><strong>${escapeHtml(recipe.title)}</strong></div>
+          <div class="meta">${escapeHtml(recipe.description || "No description")}</div>
+          <div class="actions">
+            <a class="button secondary" href="${toRecipeDetailRoute(recipe.id)}">View details</a>
+          </div>
+        </li>
+      `).join("")}
+    </ul>
+  `);
+}
+
+function renderAddRecipe() {
+  return card("Add recipe", `
+    <p class="meta">Create a recipe in the recipe catalogue.</p>
+    <form id="recipe-form" class="form-grid">
+      <label>Title *
+        <input name="title" value="${escapeHtml(state.recipeForm.title)}" required minlength="1" />
+      </label>
+      <label>Description
+        <textarea name="description" rows="3">${escapeHtml(state.recipeForm.description)}</textarea>
+      </label>
+      <label>Instructions
+        <textarea name="instructions" rows="6">${escapeHtml(state.recipeForm.instructions)}</textarea>
+      </label>
+      <label>Source URL
+        <input name="source_url" type="url" value="${escapeHtml(state.recipeForm.source_url)}" placeholder="https://example.com/recipe" />
+      </label>
+      <label>Created by user UUID (optional)
+        <input name="created_by_user_id" value="${escapeHtml(state.recipeForm.created_by_user_id)}" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
+      </label>
+      <label class="inline-checkbox">
+        <input name="is_system" type="checkbox" ${state.recipeForm.is_system ? "checked" : ""} />
+        System recipe
+      </label>
+      <button type="submit">${state.loading ? "Creating..." : "Create recipe"}</button>
+    </form>
+  `);
+}
+
+function renderRecipeDetail() {
+  if (!state.selectedRecipeId) {
+    return card("Recipe detail", "<p class='empty'>No recipe selected.</p>");
+  }
+
+  if (!state.selectedRecipe || !state.recipeDetailForm) {
+    return card("Recipe detail", "<p>Loading recipe details...</p>");
+  }
+
+  return card("Recipe detail", `
+    <p class="meta">Edit or delete this recipe.</p>
+    <form id="recipe-detail-form" class="form-grid">
+      <label>Title *
+        <input name="title" value="${escapeHtml(state.recipeDetailForm.title)}" required minlength="1" />
+      </label>
+      <label>Description
+        <textarea name="description" rows="3">${escapeHtml(state.recipeDetailForm.description)}</textarea>
+      </label>
+      <label>Instructions
+        <textarea name="instructions" rows="6">${escapeHtml(state.recipeDetailForm.instructions)}</textarea>
+      </label>
+      <label>Source URL
+        <input name="source_url" type="url" value="${escapeHtml(state.recipeDetailForm.source_url)}" placeholder="https://example.com/recipe" />
+      </label>
+      <label>Created by user UUID (optional)
+        <input name="created_by_user_id" value="${escapeHtml(state.recipeDetailForm.created_by_user_id)}" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
+      </label>
+      <label class="inline-checkbox">
+        <input name="is_system" type="checkbox" ${state.recipeDetailForm.is_system ? "checked" : ""} />
+        System recipe
+      </label>
+      <div class="actions">
+        <button type="submit">${state.loading ? "Saving..." : "Save changes"}</button>
+        <button type="button" id="delete-recipe" ${state.loading ? "disabled" : ""}>Delete recipe</button>
+      </div>
+    </form>
+  `);
+}
+
 function attachEvents() {
   const loginForm = document.querySelector("#login-form");
   if (loginForm) {
@@ -630,7 +769,18 @@ function attachEvents() {
     ingredientDetailForm.addEventListener("submit", onSubmitIngredientUpdate);
   }
 
+  const recipeForm = document.querySelector("#recipe-form");
+  if (recipeForm) {
+    recipeForm.addEventListener("submit", onSubmitRecipe);
+  }
+
+  const recipeDetailForm = document.querySelector("#recipe-detail-form");
+  if (recipeDetailForm) {
+    recipeDetailForm.addEventListener("submit", onSubmitRecipeUpdate);
+  }
+
   document.querySelector("#delete-ingredient")?.addEventListener("click", onDeleteIngredient);
+  document.querySelector("#delete-recipe")?.addEventListener("click", onDeleteRecipe);
 
   document.querySelector("#refresh-cupboard")?.addEventListener("click", async () => {
     await onRefreshCupboard();
@@ -671,6 +821,7 @@ async function onSubmitLogin(event) {
     storeCurrentUser,
     loadFoodEntries,
     loadCupboardItems,
+    loadRecipes,
   });
 }
 
@@ -761,6 +912,43 @@ async function onDeleteIngredient(event) {
     ensureAuthenticated,
     deleteIngredient,
     loadIngredients,
+    handlePossiblyStaleSession,
+  });
+}
+
+async function onSubmitRecipe(event) {
+  await handleSubmitRecipe(event, {
+    state,
+    render,
+    setFeedback,
+    ensureAuthenticated,
+    createRecipe,
+    defaultRecipeForm,
+    loadRecipes,
+    handlePossiblyStaleSession,
+  });
+}
+
+async function onSubmitRecipeUpdate(event) {
+  await handleSubmitRecipeUpdate(event, {
+    state,
+    render,
+    setFeedback,
+    ensureAuthenticated,
+    updateRecipe,
+    loadRecipeById,
+    handlePossiblyStaleSession,
+  });
+}
+
+async function onDeleteRecipe(event) {
+  await handleDeleteRecipe(event, {
+    state,
+    render,
+    setFeedback,
+    ensureAuthenticated,
+    deleteRecipe,
+    loadRecipes,
     handlePossiblyStaleSession,
   });
 }
@@ -864,6 +1052,71 @@ async function loadIngredientById(ingredientId, renderOnComplete = true) {
   }
 }
 
+async function loadRecipes(renderOnComplete = true) {
+  if (!currentUserId()) {
+    state.recipes = [];
+    state.recipesMeta = { total: 0, limit: 25, offset: 0 };
+    if (renderOnComplete) {
+      render();
+    }
+    return;
+  }
+
+  try {
+    const response = await getRecipes();
+    state.recipes = Array.isArray(response) ? response : response?.items || [];
+    state.recipesMeta = {
+      total: Number(response?.total || state.recipes.length),
+      limit: Number(response?.limit || 25),
+      offset: Number(response?.offset || 0),
+    };
+  } catch (error) {
+    state.recipes = [];
+    state.recipesMeta = { total: 0, limit: 25, offset: 0 };
+    if (!handlePossiblyStaleSession(error)) {
+      setFeedback("error", `Could not load recipes: ${error.message}`);
+    }
+  }
+
+  if (renderOnComplete) {
+    render();
+  }
+}
+
+async function loadRecipeById(recipeId, renderOnComplete = true) {
+  if (!recipeId) {
+    state.selectedRecipe = null;
+    state.recipeDetailForm = null;
+    if (renderOnComplete) {
+      render();
+    }
+    return;
+  }
+
+  try {
+    const recipe = await getRecipe(recipeId);
+    state.selectedRecipe = recipe;
+    state.recipeDetailForm = {
+      title: recipe.title || "",
+      description: recipe.description || "",
+      instructions: recipe.instructions || "",
+      source_url: recipe.source_url || "",
+      created_by_user_id: recipe.created_by_user_id || "",
+      is_system: Boolean(recipe.is_system),
+    };
+  } catch (error) {
+    state.selectedRecipe = null;
+    state.recipeDetailForm = null;
+    if (!handlePossiblyStaleSession(error)) {
+      setFeedback("error", `Could not load recipe detail: ${error.message}`);
+    }
+  }
+
+  if (renderOnComplete) {
+    render();
+  }
+}
+
 async function loadCupboardItems(renderOnComplete = true) {
   state.cupboardError = "";
   state.cupboardLoading = true;
@@ -933,6 +1186,9 @@ function render() {
   if (state.route === "add-ingredient") content = renderAddIngredient();
   if (state.route === "ingredients") content = renderIngredientsList();
   if (state.route === "ingredient-detail") content = renderIngredientDetail();
+  if (state.route === "recipes") content = renderRecipesList();
+  if (state.route === "add-recipe") content = renderAddRecipe();
+  if (state.route === "recipe-detail") content = renderRecipeDetail();
 
   const bannerClass = state.feedback.type || "notice";
   const banner = state.feedback.message ? `<section class="card ${bannerClass}">${escapeHtml(state.feedback.message)}</section>` : "";
@@ -944,15 +1200,20 @@ async function bootstrap() {
   setRouteFromHash();
   const hashParams = new URLSearchParams(window.location.hash.split("?")[1] || "");
   state.selectedIngredientId = hashParams.get("id") || "";
+  state.selectedRecipeId = hashParams.get("id") || "";
   await Promise.all([loadHealth(), loadIngredients()]);
   await restoreSessionIfPossible();
 
   if (currentUserId()) {
-    await Promise.all([loadFoodEntries(false), loadCupboardItems(false)]);
+    await Promise.all([loadFoodEntries(false), loadCupboardItems(false), loadRecipes(false)]);
   }
 
   if (state.route === "ingredient-detail") {
     await loadIngredientById(state.selectedIngredientId, false);
+  }
+
+  if (state.route === "recipe-detail") {
+    await loadRecipeById(state.selectedRecipeId, false);
   }
 
   render();
@@ -962,6 +1223,7 @@ window.addEventListener("hashchange", async () => {
   setRouteFromHash();
   const hashParams = new URLSearchParams(window.location.hash.split("?")[1] || "");
   state.selectedIngredientId = hashParams.get("id") || "";
+  state.selectedRecipeId = hashParams.get("id") || "";
 
   if (state.route === "entries") {
     await loadFoodEntries(false);
@@ -977,6 +1239,14 @@ window.addEventListener("hashchange", async () => {
 
   if (state.route === "ingredient-detail") {
     await loadIngredientById(state.selectedIngredientId, false);
+  }
+
+  if (state.route === "recipes") {
+    await loadRecipes(false);
+  }
+
+  if (state.route === "recipe-detail") {
+    await loadRecipeById(state.selectedRecipeId, false);
   }
 
   clearFeedback();
