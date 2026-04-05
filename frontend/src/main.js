@@ -90,7 +90,6 @@ const defaultRecipeForm = () => ({
   description: "",
   instructions: "",
   source_url: "",
-  created_by_user_id: "",
   is_system: false,
 });
 
@@ -692,9 +691,6 @@ function renderAddRecipe() {
       <label>Source URL
         <input name="source_url" type="url" value="${escapeHtml(state.recipeForm.source_url)}" placeholder="https://example.com/recipe" />
       </label>
-      <label>Created by user UUID (optional)
-        <input name="created_by_user_id" value="${escapeHtml(state.recipeForm.created_by_user_id)}" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
-      </label>
       <label class="inline-checkbox">
         <input name="is_system" type="checkbox" ${state.recipeForm.is_system ? "checked" : ""} />
         System recipe
@@ -922,6 +918,7 @@ async function onSubmitRecipe(event) {
     render,
     setFeedback,
     ensureAuthenticated,
+    currentUserId,
     createRecipe,
     defaultRecipeForm,
     loadRecipes,

@@ -30,6 +30,7 @@ export async function handleSubmitRecipe(event, deps) {
     render,
     setFeedback,
     ensureAuthenticated,
+    currentUserId,
     createRecipe,
     defaultRecipeForm,
     loadRecipes,
@@ -42,14 +43,14 @@ export async function handleSubmitRecipe(event, deps) {
   }
 
   const formData = new FormData(event.target);
-  const { payload, createdByUserIdRaw } = parseRecipeForm(formData);
+  const { payload } = parseRecipeForm(formData);
+  payload.created_by_user_id = currentUserId() || null;
 
   state.recipeForm = {
     title: payload.title,
     description: payload.description,
     instructions: payload.instructions,
     source_url: payload.source_url,
-    created_by_user_id: createdByUserIdRaw,
     is_system: payload.is_system,
   };
 
