@@ -84,6 +84,13 @@ export function getIngredients() {
   return request("/ingredients", { method: "GET" });
 }
 
+export function createIngredient(data) {
+  return request("/ingredients", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
 export function getFoodEntries(params = {}) {
   return request(`/food-entries${buildQueryString(params)}`, { method: "GET" });
 }

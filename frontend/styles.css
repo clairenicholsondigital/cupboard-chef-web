@@ -72,6 +72,16 @@ label {
   font-size: 0.95rem;
 }
 
+.inline-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.inline-checkbox input[type="checkbox"] {
+  width: auto;
+}
+
 input, textarea, select, button {
   font: inherit;
 }
