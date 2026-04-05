@@ -312,3 +312,59 @@ export function loginWithEmail(data) {
     throw error;
   });
 }
+
+export function getShoppingLists(params = {}) {
+  return request(`/shopping-lists${buildQueryString(params)}`, { method: "GET" });
+}
+
+export function getUserShoppingLists(userId, params = {}) {
+  return request(`/users/${encodeURIComponent(userId)}/shopping-lists${buildQueryString(params)}`, { method: "GET" });
+}
+
+export function createShoppingList(userId, data) {
+  return request(`/users/${encodeURIComponent(userId)}/shopping-lists`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function getShoppingList(shoppingListId) {
+  return request(`/shopping-lists/${encodeURIComponent(shoppingListId)}`, { method: "GET" });
+}
+
+export function updateShoppingList(shoppingListId, data) {
+  return request(`/shopping-lists/${encodeURIComponent(shoppingListId)}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export function deleteShoppingList(shoppingListId) {
+  return request(`/shopping-lists/${encodeURIComponent(shoppingListId)}`, { method: "DELETE" });
+}
+
+export function getShoppingListItems(shoppingListId, params = {}) {
+  return request(`/shopping-lists/${encodeURIComponent(shoppingListId)}/items${buildQueryString(params)}`, { method: "GET" });
+}
+
+export function createShoppingListItem(shoppingListId, data) {
+  return request(`/shopping-lists/${encodeURIComponent(shoppingListId)}/items`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function getShoppingListItem(itemId) {
+  return request(`/shopping-list-items/${encodeURIComponent(itemId)}`, { method: "GET" });
+}
+
+export function updateShoppingListItem(itemId, data) {
+  return request(`/shopping-list-items/${encodeURIComponent(itemId)}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export function deleteShoppingListItem(itemId) {
+  return request(`/shopping-list-items/${encodeURIComponent(itemId)}`, { method: "DELETE" });
+}

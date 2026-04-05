@@ -6,6 +6,10 @@ import {
   deleteRecipe,
   createUserFoodEntry,
   createUserStorecupboardItem,
+  createShoppingList,
+  createShoppingListItem,
+  deleteShoppingList,
+  deleteShoppingListItem,
   getIngredient,
   getRecipe,
   getRecipes,
@@ -13,12 +17,17 @@ import {
   getApiBaseUrl,
   getCurrentUser,
   getIngredients,
+  getShoppingList,
+  getShoppingListItems,
+  getUserShoppingLists,
   getUserFoodEntries,
   getUserStorecupboardItems,
   healthCheck,
   loginWithEmail,
   updateRecipe,
   updateIngredient,
+  updateShoppingList,
+  updateShoppingListItem,
   updateUserStorecupboardItem,
 } from "./api.js";
 
@@ -41,6 +50,17 @@ import {
   handleSubmitRecipe,
   handleSubmitRecipeUpdate,
 } from "./handlers/recipeHandlers.js";
+import {
+  handleDeleteShoppingList,
+  handleDeleteShoppingListItem,
+  handleStartShoppingListItemEdit,
+  handleCancelShoppingListItemEdit,
+  handleSubmitShoppingList,
+  handleSubmitShoppingListItem,
+  handleSubmitShoppingListItemUpdate,
+  handleSubmitShoppingListUpdate,
+  handleToggleShoppingListItem,
+} from "./handlers/shoppingHandlers.js";
 import React from "https://esm.sh/react@18.3.1";
 import { renderToStaticMarkup } from "https://esm.sh/react-dom@18.3.1/server";
 import {
@@ -70,9 +90,10 @@ const ROUTE_META = [
   { route: "add-ingredient", label: "Add ingredient", icon: SquarePlus },
   { route: "ingredients", label: "Ingredients list", icon: Soup },
   { route: "recipes", label: "Recipes", icon: BookOpen },
+  { route: "shopping-lists", label: "Shopping", icon: ClipboardList },
   { route: "add-recipe", label: "Add recipe", icon: ScrollText },
 ];
-const PRIMARY_TAB_ROUTES = ["dashboard", "ingredients", "cupboard", "recipes"];
+const PRIMARY_TAB_ROUTES = ["dashboard", "ingredients", "cupboard", "shopping-lists", "recipes"];
 const PAGE_META = {
   dashboard: { title: "Dashboard", subtitle: "Track meals, cupboard stock, and recipes in one place." },
   login: { title: "Login", subtitle: "Sign in to access your synced Cupboard Chef data." },
@@ -87,6 +108,9 @@ const PAGE_META = {
   recipes: { title: "Recipes", subtitle: "Browse and manage saved recipes." },
   "add-recipe": { title: "Add recipe", subtitle: "Create a new recipe for your collection." },
   "recipe-detail": { title: "Recipe detail", subtitle: "Edit recipe information and instructions." },
+  "shopping-lists": { title: "Shopping lists", subtitle: "Plan your next shop and tick items off as you go." },
+  "add-shopping-list": { title: "Add shopping list", subtitle: "Create a new shopping list for an upcoming shop." },
+  "shopping-list-detail": { title: "Shopping list detail", subtitle: "Manage list details and item checklist." },
 };
 
 // Use multiple keys so the frontend stays compatible with whichever key api.js is reading.
@@ -137,6 +161,20 @@ const defaultRecipeForm = () => ({
   is_system: false,
 });
 
+const defaultShoppingListForm = () => ({
+  name: "",
+  status: "active",
+});
+
+const defaultShoppingListItemForm = () => ({
+  ingredient_id: "",
+  item_name: "",
+  quantity: "",
+  unit: "",
+  note: "",
+  source_type: "manual",
+});
+
 const state = {
   route: "dashboard",
   error: "",
@@ -163,6 +201,17 @@ const state = {
   selectedRecipeId: "",
   selectedIngredient: null,
   selectedRecipe: null,
+  shoppingLists: [],
+  selectedShoppingListId: "",
+  selectedShoppingList: null,
+  shoppingListForm: defaultShoppingListForm(),
+  shoppingListDetailForm: null,
+  shoppingListItems: [],
+  shoppingListItemForm: defaultShoppingListItemForm(),
+  shoppingListEditingItemId: "",
+  shoppingListLoading: false,
+  shoppingListError: "",
+  shoppingListSuccess: "",
   authForm: {
     email: "",
     password: "",
@@ -264,6 +313,15 @@ function clearLocalSession() {
   state.selectedRecipeId = "";
   state.selectedRecipe = null;
   state.recipeDetailForm = null;
+  state.shoppingLists = [];
+  state.selectedShoppingListId = "";
+  state.selectedShoppingList = null;
+  state.shoppingListDetailForm = null;
+  state.shoppingListItems = [];
+  state.shoppingListEditingItemId = "";
+  state.shoppingListLoading = false;
+  state.shoppingListError = "";
+  state.shoppingListSuccess = "";
   clearStoredAccessToken();
   clearStoredCurrentUser();
 }
@@ -331,6 +389,9 @@ function setRouteFromHash() {
     "/recipes": "recipes",
     "/add-recipe": "add-recipe",
     "/recipe-detail": "recipe-detail",
+    "/shopping-lists": "shopping-lists",
+    "/add-shopping-list": "add-shopping-list",
+    "/shopping-list-detail": "shopping-list-detail",
     "/login": "login",
     "/profile": "profile",
   };
@@ -955,6 +1016,157 @@ function renderRecipeDetail() {
   `, "card-soft");
 }
 
+function toShoppingListDetailRoute(shoppingListId) {
+  return `#/shopping-list-detail?id=${encodeURIComponent(shoppingListId)}`;
+}
+
+function renderShoppingLists() {
+  if (state.shoppingListLoading && !state.shoppingLists.length) {
+    return card("Shopping lists", "<p>Loading shopping lists...</p>");
+  }
+
+  if (!state.shoppingLists.length) {
+    return card("Shopping lists", `
+      <p class="empty">No shopping lists yet.</p>
+      <div class="actions">
+        <a class="button button-primary" href="#/add-shopping-list">Create shopping list</a>
+      </div>
+    `, "card-soft");
+  }
+
+  return card("Shopping lists", `
+    <div class="actions actions-quiet">
+      <a class="button button-primary" href="#/add-shopping-list">Create shopping list</a>
+    </div>
+    <ul class="list list-polished">
+      ${state.shoppingLists.map((list) => `
+        <li>
+          <div><strong>${escapeHtml(list.name)}</strong></div>
+          <div class="meta">Status: ${escapeHtml(list.status)} · Updated ${escapeHtml(formatFriendlyDateTime(list.updated_at))}</div>
+          <div class="actions">
+            <a class="button button-secondary" href="${toShoppingListDetailRoute(list.id)}">Open list</a>
+          </div>
+        </li>
+      `).join("")}
+    </ul>
+  `, "card-soft");
+}
+
+function renderAddShoppingList() {
+  return card("Add shopping list", `
+    <form id="shopping-list-form" class="form-grid">
+      <label>List name *
+        <input name="name" required value="${escapeHtml(state.shoppingListForm.name)}" placeholder="e.g. Weekly shop" />
+      </label>
+      <label>Status
+        <select name="status">
+          <option value="active" ${state.shoppingListForm.status === "active" ? "selected" : ""}>active</option>
+          <option value="archived" ${state.shoppingListForm.status === "archived" ? "selected" : ""}>archived</option>
+        </select>
+      </label>
+      <button type="submit" class="button button-primary button-block">${state.shoppingListLoading ? "Creating..." : "Create shopping list"}</button>
+    </form>
+  `, "card-soft");
+}
+
+function renderShoppingListDetail() {
+  if (!state.selectedShoppingListId) {
+    return card("Shopping list detail", "<p class='empty'>No shopping list selected.</p>");
+  }
+  if (!state.selectedShoppingList || !state.shoppingListDetailForm) {
+    return card("Shopping list detail", "<p>Loading shopping list...</p>");
+  }
+
+  return card("Shopping list detail", `
+    <form id="shopping-list-detail-form" class="form-grid">
+      <label>List name *
+        <input name="name" required value="${escapeHtml(state.shoppingListDetailForm.name)}" />
+      </label>
+      <label>Status
+        <select name="status">
+          <option value="active" ${state.shoppingListDetailForm.status === "active" ? "selected" : ""}>active</option>
+          <option value="archived" ${state.shoppingListDetailForm.status === "archived" ? "selected" : ""}>archived</option>
+        </select>
+      </label>
+      <div class="actions">
+        <button type="submit" class="button button-primary">${state.shoppingListLoading ? "Saving..." : "Save list"}</button>
+        <button type="button" id="delete-shopping-list" class="button button-danger">Delete list</button>
+      </div>
+    </form>
+    <hr />
+    <h3>Add item</h3>
+    <form id="shopping-list-item-form" class="form-grid">
+      <label>Item name
+        <input name="item_name" value="${escapeHtml(state.shoppingListItemForm.item_name)}" placeholder="e.g. Milk" />
+      </label>
+      <label>Ingredient (optional)
+        <select name="ingredient_id">
+          <option value="">(none)</option>
+          ${state.ingredients.map((ingredient) => `<option value="${ingredient.id}" ${state.shoppingListItemForm.ingredient_id === ingredient.id ? "selected" : ""}>${escapeHtml(ingredient.display_name)}</option>`).join("")}
+        </select>
+      </label>
+      <label>Quantity
+        <input name="quantity" type="number" step="0.01" value="${escapeHtml(state.shoppingListItemForm.quantity)}" />
+      </label>
+      <label>Unit
+        <input name="unit" value="${escapeHtml(state.shoppingListItemForm.unit)}" placeholder="e.g. g, ml, pack" />
+      </label>
+      <label>Note
+        <input name="note" value="${escapeHtml(state.shoppingListItemForm.note)}" placeholder="optional note" />
+      </label>
+      <label>Source type
+        <select name="source_type">
+          <option value="manual" ${state.shoppingListItemForm.source_type === "manual" ? "selected" : ""}>manual</option>
+          <option value="ingredient" ${state.shoppingListItemForm.source_type === "ingredient" ? "selected" : ""}>ingredient</option>
+          <option value="cupboard_item" ${state.shoppingListItemForm.source_type === "cupboard_item" ? "selected" : ""}>cupboard item</option>
+          <option value="recipe" ${state.shoppingListItemForm.source_type === "recipe" ? "selected" : ""}>recipe</option>
+        </select>
+      </label>
+      <button type="submit" class="button button-primary button-block">Add item</button>
+    </form>
+    <h3>Items</h3>
+    <ul class="list list-polished">
+      ${state.shoppingListItems.map((item) => {
+    const itemTitle = item.ingredient_display_name || item.item_name || item.ingredient_canonical_name || "Untitled item";
+    if (state.shoppingListEditingItemId === item.id) {
+      return `
+          <li>
+            <form class="form-grid shopping-item-update-form" data-item-id="${item.id}">
+              <label>Item name
+                <input name="item_name" value="${escapeHtml(item.item_name || "")}" />
+              </label>
+              <label>Quantity
+                <input name="quantity" type="number" step="0.01" value="${escapeHtml(item.quantity ?? "")}" />
+              </label>
+              <label>Unit
+                <input name="unit" value="${escapeHtml(item.unit || "")}" />
+              </label>
+              <label>Note
+                <input name="note" value="${escapeHtml(item.note || "")}" />
+              </label>
+              <label class="inline-checkbox"><input type="checkbox" name="is_checked" ${item.is_checked ? "checked" : ""} /> Ticked</label>
+              <button type="submit" class="button button-primary">Save item</button>
+              <button type="button" class="button button-secondary shopping-item-cancel-edit">Cancel</button>
+            </form>
+          </li>
+        `;
+    }
+    return `
+          <li class="${item.is_checked ? "shopping-item-checked" : ""}">
+            <div><strong>${escapeHtml(itemTitle)}</strong></div>
+            <div class="meta">${escapeHtml(item.quantity ?? "")} ${escapeHtml(item.unit || "")} ${item.note ? `· ${escapeHtml(item.note)}` : ""}</div>
+            <div class="actions">
+              <button type="button" class="button button-secondary shopping-item-toggle" data-item-id="${item.id}" data-is-checked="${item.is_checked ? "true" : "false"}">${item.is_checked ? "Untick" : "Tick"}</button>
+              <button type="button" class="button button-secondary shopping-item-edit" data-item-id="${item.id}">Edit</button>
+              <button type="button" class="button button-danger-outline shopping-item-delete" data-item-id="${item.id}">Delete</button>
+            </div>
+          </li>
+        `;
+  }).join("")}
+    </ul>
+  `, "card-soft");
+}
+
 function attachEvents() {
   const loginForm = document.querySelector("#login-form");
   if (loginForm) {
@@ -990,9 +1202,22 @@ function attachEvents() {
   if (recipeDetailForm) {
     recipeDetailForm.addEventListener("submit", onSubmitRecipeUpdate);
   }
+  const shoppingListForm = document.querySelector("#shopping-list-form");
+  if (shoppingListForm) {
+    shoppingListForm.addEventListener("submit", onSubmitShoppingList);
+  }
+  const shoppingListDetailForm = document.querySelector("#shopping-list-detail-form");
+  if (shoppingListDetailForm) {
+    shoppingListDetailForm.addEventListener("submit", onSubmitShoppingListUpdate);
+  }
+  const shoppingListItemForm = document.querySelector("#shopping-list-item-form");
+  if (shoppingListItemForm) {
+    shoppingListItemForm.addEventListener("submit", onSubmitShoppingListItem);
+  }
 
   document.querySelector("#delete-ingredient")?.addEventListener("click", onDeleteIngredient);
   document.querySelector("#delete-recipe")?.addEventListener("click", onDeleteRecipe);
+  document.querySelector("#delete-shopping-list")?.addEventListener("click", onDeleteShoppingList);
 
   document.querySelectorAll(".cupboard-edit").forEach((button) => {
     button.addEventListener("click", (event) => {
@@ -1012,6 +1237,21 @@ function attachEvents() {
 
   document.querySelectorAll(".cupboard-delete").forEach((button) => {
     button.addEventListener("click", onDeleteCupboardItem);
+  });
+  document.querySelectorAll(".shopping-item-toggle").forEach((button) => {
+    button.addEventListener("click", onToggleShoppingListItem);
+  });
+  document.querySelectorAll(".shopping-item-edit").forEach((button) => {
+    button.addEventListener("click", onStartShoppingListItemEdit);
+  });
+  document.querySelectorAll(".shopping-item-cancel-edit").forEach((button) => {
+    button.addEventListener("click", onCancelShoppingListItemEdit);
+  });
+  document.querySelectorAll(".shopping-item-update-form").forEach((form) => {
+    form.addEventListener("submit", onSubmitShoppingListItemUpdate);
+  });
+  document.querySelectorAll(".shopping-item-delete").forEach((button) => {
+    button.addEventListener("click", onDeleteShoppingListItem);
   });
 
   const cupboardSearch = document.querySelector("#cupboard-search");
@@ -1048,6 +1288,7 @@ async function onSubmitLogin(event) {
     loadFoodEntries,
     loadCupboardItems,
     loadRecipes,
+    loadShoppingLists,
   });
 }
 
@@ -1178,6 +1419,51 @@ async function onDeleteRecipe(event) {
     loadRecipes,
     handlePossiblyStaleSession,
   });
+}
+async function onSubmitShoppingList(event) {
+  await handleSubmitShoppingList(event, {
+    state, render, setFeedback, ensureAuthenticated, currentUserId,
+    createShoppingList, defaultShoppingListForm, loadShoppingLists, handlePossiblyStaleSession,
+  });
+}
+async function onSubmitShoppingListUpdate(event) {
+  await handleSubmitShoppingListUpdate(event, {
+    state, render, setFeedback, ensureAuthenticated,
+    updateShoppingList, loadShoppingListDetail, loadShoppingLists, handlePossiblyStaleSession,
+  });
+}
+async function onDeleteShoppingList(event) {
+  await handleDeleteShoppingList(event, {
+    state, render, setFeedback, ensureAuthenticated, deleteShoppingList, loadShoppingLists, handlePossiblyStaleSession,
+  });
+}
+async function onSubmitShoppingListItem(event) {
+  await handleSubmitShoppingListItem(event, {
+    state, render, setFeedback, ensureAuthenticated, createShoppingListItem,
+    defaultShoppingListItemForm, loadShoppingListItems, loadShoppingListDetail, handlePossiblyStaleSession,
+  });
+}
+async function onSubmitShoppingListItemUpdate(event) {
+  await handleSubmitShoppingListItemUpdate(event, {
+    state, render, setFeedback, ensureAuthenticated, updateShoppingListItem,
+    loadShoppingListItems, loadShoppingListDetail, handlePossiblyStaleSession,
+  });
+}
+async function onToggleShoppingListItem(event) {
+  await handleToggleShoppingListItem(event, {
+    state, render, setFeedback, updateShoppingListItem, loadShoppingListItems, loadShoppingListDetail, handlePossiblyStaleSession,
+  });
+}
+async function onDeleteShoppingListItem(event) {
+  await handleDeleteShoppingListItem(event, {
+    state, render, setFeedback, deleteShoppingListItem, loadShoppingListItems, loadShoppingListDetail, handlePossiblyStaleSession,
+  });
+}
+function onStartShoppingListItemEdit(event) {
+  handleStartShoppingListItemEdit(event, { state, render });
+}
+function onCancelShoppingListItemEdit() {
+  handleCancelShoppingListItemEdit({ state, render });
 }
 
 function onLogout() {
@@ -1340,6 +1626,63 @@ async function loadRecipeById(recipeId, renderOnComplete = true) {
   }
 }
 
+async function loadShoppingLists(renderOnComplete = true) {
+  if (!currentUserId()) {
+    state.shoppingLists = [];
+    if (renderOnComplete) render();
+    return;
+  }
+  try {
+    const response = await getUserShoppingLists(currentUserId());
+    state.shoppingLists = Array.isArray(response) ? response : response?.items || [];
+  } catch (error) {
+    state.shoppingLists = [];
+    if (!handlePossiblyStaleSession(error)) {
+      setFeedback("error", `Could not load shopping lists: ${error.message}`);
+    }
+  }
+  if (renderOnComplete) render();
+}
+
+async function loadShoppingListDetail(shoppingListId, renderOnComplete = true) {
+  if (!shoppingListId) {
+    state.selectedShoppingList = null;
+    state.shoppingListDetailForm = null;
+    if (renderOnComplete) render();
+    return;
+  }
+  try {
+    const list = await getShoppingList(shoppingListId);
+    state.selectedShoppingList = list;
+    state.shoppingListDetailForm = { name: list.name || "", status: list.status || "active" };
+  } catch (error) {
+    state.selectedShoppingList = null;
+    state.shoppingListDetailForm = null;
+    if (!handlePossiblyStaleSession(error)) {
+      setFeedback("error", `Could not load shopping list detail: ${error.message}`);
+    }
+  }
+  if (renderOnComplete) render();
+}
+
+async function loadShoppingListItems(shoppingListId, renderOnComplete = true) {
+  if (!shoppingListId) {
+    state.shoppingListItems = [];
+    if (renderOnComplete) render();
+    return;
+  }
+  try {
+    const response = await getShoppingListItems(shoppingListId, { sort_by: "sort_order", sort_dir: "asc" });
+    state.shoppingListItems = Array.isArray(response) ? response : response?.items || [];
+  } catch (error) {
+    state.shoppingListItems = [];
+    if (!handlePossiblyStaleSession(error)) {
+      setFeedback("error", `Could not load shopping list items: ${error.message}`);
+    }
+  }
+  if (renderOnComplete) render();
+}
+
 async function loadCupboardItems(renderOnComplete = true) {
   state.cupboardError = "";
   state.cupboardLoading = true;
@@ -1422,6 +1765,9 @@ function render() {
   if (state.route === "recipes") content = renderRecipesList();
   if (state.route === "add-recipe") content = renderAddRecipe();
   if (state.route === "recipe-detail") content = renderRecipeDetail();
+  if (state.route === "shopping-lists") content = renderShoppingLists();
+  if (state.route === "add-shopping-list") content = renderAddShoppingList();
+  if (state.route === "shopping-list-detail") content = renderShoppingListDetail();
 
   const bannerClass = state.feedback.type || "notice";
   const banner = state.feedback.message ? `<section class="card ${bannerClass}">${escapeHtml(state.feedback.message)}</section>` : "";
@@ -1434,11 +1780,12 @@ async function bootstrap() {
   const hashParams = new URLSearchParams(window.location.hash.split("?")[1] || "");
   state.selectedIngredientId = hashParams.get("id") || "";
   state.selectedRecipeId = hashParams.get("id") || "";
+  state.selectedShoppingListId = hashParams.get("id") || "";
   await Promise.all([loadHealth(), loadIngredients()]);
   await restoreSessionIfPossible();
 
   if (currentUserId()) {
-    await Promise.all([loadFoodEntries(false), loadCupboardItems(false), loadRecipes(false)]);
+    await Promise.all([loadFoodEntries(false), loadCupboardItems(false), loadRecipes(false), loadShoppingLists(false)]);
   }
 
   if (state.route === "ingredient-detail") {
@@ -1448,15 +1795,23 @@ async function bootstrap() {
   if (state.route === "recipe-detail") {
     await loadRecipeById(state.selectedRecipeId, false);
   }
+  if (state.route === "shopping-list-detail") {
+    await Promise.all([
+      loadShoppingListDetail(state.selectedShoppingListId, false),
+      loadShoppingListItems(state.selectedShoppingListId, false),
+    ]);
+  }
 
   render();
 }
 
 window.addEventListener("hashchange", async () => {
+  try {
   setRouteFromHash();
   const hashParams = new URLSearchParams(window.location.hash.split("?")[1] || "");
   state.selectedIngredientId = hashParams.get("id") || "";
   state.selectedRecipeId = hashParams.get("id") || "";
+  state.selectedShoppingListId = hashParams.get("id") || "";
 
   if (state.route === "entries") {
     await loadFoodEntries(false);
@@ -1481,9 +1836,27 @@ window.addEventListener("hashchange", async () => {
   if (state.route === "recipe-detail") {
     await loadRecipeById(state.selectedRecipeId, false);
   }
+  if (state.route === "shopping-lists") {
+    await loadShoppingLists(false);
+  }
+  if (state.route === "shopping-list-detail") {
+    await Promise.all([
+      loadShoppingListDetail(state.selectedShoppingListId, false),
+      loadShoppingListItems(state.selectedShoppingListId, false),
+    ]);
+  }
 
   clearFeedback();
   render();
+  } catch (error) {
+    setFeedback("error", `App navigation failed: ${error.message}`);
+    render();
+  }
 });
 
-bootstrap();
+bootstrap().catch((error) => {
+  const app = document.querySelector("#app");
+  if (app) {
+    app.innerHTML = `<section class="card error"><h2>App failed to load</h2><p>${escapeHtml(error?.message || "Unknown error")}</p></section>`;
+  }
+});
