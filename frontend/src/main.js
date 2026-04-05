@@ -82,6 +82,30 @@ const state = {
   health: null,
 };
 
+function safeStorageGet(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return "";
+  }
+}
+
+function safeStorageSet(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Ignore storage write failures (private mode / blocked storage).
+  }
+}
+
+function safeStorageRemove(key) {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    // Ignore storage delete failures.
+  }
+}
+
 function setFeedback(type, message) {
   state.feedback = { type, message };
 }
@@ -96,7 +120,7 @@ function currentUserId() {
 
 function getStoredAccessToken() {
   for (const key of AUTH_STORAGE_KEYS) {
-    const value = localStorage.getItem(key);
+    const value = safeStorageGet(key);
     if (value) {
       return value;
     }
@@ -106,13 +130,13 @@ function getStoredAccessToken() {
 
 function storeAccessToken(token) {
   for (const key of AUTH_STORAGE_KEYS) {
-    localStorage.setItem(key, token);
+    safeStorageSet(key, token);
   }
 }
 
 function clearStoredAccessToken() {
   for (const key of AUTH_STORAGE_KEYS) {
-    localStorage.removeItem(key);
+    safeStorageRemove(key);
   }
 }
 
@@ -121,15 +145,15 @@ function storeCurrentUser(user) {
     return;
   }
 
-  localStorage.setItem(USER_STORAGE_KEYS.userId, user.user_id || "");
-  localStorage.setItem(USER_STORAGE_KEYS.email, user.email || "");
-  localStorage.setItem(USER_STORAGE_KEYS.displayName, user.display_name || "");
+  safeStorageSet(USER_STORAGE_KEYS.userId, user.user_id || "");
+  safeStorageSet(USER_STORAGE_KEYS.email, user.email || "");
+  safeStorageSet(USER_STORAGE_KEYS.displayName, user.display_name || "");
 }
 
 function clearStoredCurrentUser() {
-  localStorage.removeItem(USER_STORAGE_KEYS.userId);
-  localStorage.removeItem(USER_STORAGE_KEYS.email);
-  localStorage.removeItem(USER_STORAGE_KEYS.displayName);
+  safeStorageRemove(USER_STORAGE_KEYS.userId);
+  safeStorageRemove(USER_STORAGE_KEYS.email);
+  safeStorageRemove(USER_STORAGE_KEYS.displayName);
 }
 
 function clearLocalSession() {
@@ -565,7 +589,7 @@ async function onSubmitLogin(event) {
 
     storeAccessToken(response.access_token);
 
-    const identity = await getCurrentUser(response.email || response.user_id);
+    const identity = await getCurrentUser(response.access_token);
 
     state.authSubject = response.email || response.user_id || "";
     state.currentUser = {
@@ -984,4 +1008,7 @@ window.addEventListener("hashchange", async () => {
   render();
 });
 
-bootstrap();
+bootstrap().catch((error) => {
+  setFeedback("error", `App failed to load: ${error instanceof Error ? error.message : String(error)}`);
+  render();
+});
