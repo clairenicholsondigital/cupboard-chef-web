@@ -1,4 +1,10 @@
 const DEFAULT_API_BASE_URL = "https://api.food.helixscribe.cloud";
+const AUTH_STORAGE_KEYS = [
+  "cupboard_chef_access_token",
+  "access_token",
+  "auth_token",
+  "token",
+];
 
 const trimTrailingSlash = (value) => value.replace(/\/+$/, "");
 
@@ -40,16 +46,39 @@ export class ApiError extends Error {
   }
 }
 
+function getStoredAccessToken() {
+  for (const key of AUTH_STORAGE_KEYS) {
+    const value = localStorage.getItem(key);
+    if (value) {
+      return value;
+    }
+  }
+  return "";
+}
+
 async function request(path, options = {}) {
   const baseUrl = getApiBaseUrl();
+  const { auth, ...fetchOptions } = options;
+  const storedToken = getStoredAccessToken();
+  const existingHeaders = fetchOptions.headers || {};
+  const hasAuthorizationHeader =
+    Object.prototype.hasOwnProperty.call(existingHeaders, "Authorization") ||
+    Object.prototype.hasOwnProperty.call(existingHeaders, "authorization");
+
+  const headers = {
+    "Content-Type": "application/json",
+    ...existingHeaders,
+  };
+
+  if (storedToken && !hasAuthorizationHeader && auth !== false) {
+    headers.Authorization = `Bearer ${storedToken}`;
+  }
+
   let response;
   try {
     response = await fetch(`${baseUrl}${path}`, {
-      headers: {
-        "Content-Type": "application/json",
-        ...(options.headers || {}),
-      },
-      ...options,
+      headers,
+      ...fetchOptions,
     });
   } catch (error) {
     throw new ApiError(
@@ -191,11 +220,12 @@ export function createUserAiSuggestion(userId, data) {
   });
 }
 
-export function getCurrentUser(subject) {
+export function getCurrentUser(accessToken) {
+  const token = accessToken || getStoredAccessToken();
   return request("/auth/me", {
     method: "GET",
     headers: {
-      Authorization: `Bearer ${subject}`,
+      Authorization: `Bearer ${token}`,
     },
   });
 }
