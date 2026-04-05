@@ -51,6 +51,11 @@ const state = {
   foodEntries: [],
   ingredients: [],
   cupboardItems: [],
+  cupboardLoading: false,
+  cupboardLoaded: false,
+  cupboardSubmitting: false,
+  cupboardError: "",
+  cupboardSuccess: "",
   foodForm: defaultFoodForm(),
   cupboardForm: defaultCupboardForm(),
   ingredientForm: defaultIngredientForm(),
@@ -156,6 +161,11 @@ function renderLayout(content) {
     state.authSubject = "";
     state.foodEntries = [];
     state.cupboardItems = [];
+    state.cupboardLoaded = false;
+    state.cupboardLoading = false;
+    state.cupboardSubmitting = false;
+    state.cupboardError = "";
+    state.cupboardSuccess = "";
     state.cupboardEditingId = "";
     setFeedback("notice", "Signed out.");
     render();
@@ -261,6 +271,18 @@ function renderEntries() {
 }
 
 function renderCupboardRows() {
+  if (state.cupboardLoading) {
+    return "<p>Loading cupboard items...</p>";
+  }
+
+  if (state.cupboardError) {
+    return `<p class="error">${escapeHtml(state.cupboardError)}</p>`;
+  }
+
+  if (!state.cupboardLoaded) {
+    return "<p class='meta'>Load your cupboard to view items.</p>";
+  }
+
   if (!state.cupboardItems.length) {
     return "<p class='empty'>No cupboard items yet. Add one to get started.</p>";
   }
@@ -312,13 +334,15 @@ function renderCupboard() {
     <p>Manage your cupboard items with full create/read/update/delete support.</p>
     <div class="actions">
       <a class="button" href="#/add-cupboard-item">Add cupboard item</a>
-      <button id="refresh-cupboard" type="button">Refresh</button>
+      <button id="refresh-cupboard" type="button" ${state.cupboardLoading ? "disabled" : ""}>${state.cupboardLoading ? "Refreshing..." : "Refresh"}</button>
     </div>
+    ${state.cupboardSuccess ? `<p class="success">${escapeHtml(state.cupboardSuccess)}</p>` : ""}
     ${renderCupboardRows()}
   `);
 }
 
 function renderAddCupboardItem() {
+  const hasIngredients = state.ingredients.length > 0;
   const ingredientOptions = state.ingredients.length
     ? state.ingredients
       .map((ingredient) => `<option value="${ingredient.id}" ${state.cupboardForm.ingredient_id === ingredient.id ? "selected" : ""}>${escapeHtml(ingredient.display_name)}</option>`)
@@ -327,9 +351,11 @@ function renderAddCupboardItem() {
 
   return card("Add cupboard item", `
     <p class="meta">Create a cupboard entry linked to one ingredient.</p>
+    ${state.cupboardSuccess ? `<p class="success">${escapeHtml(state.cupboardSuccess)}</p>` : ""}
+    ${state.cupboardError ? `<p class="error">${escapeHtml(state.cupboardError)}</p>` : ""}
     <form id="cupboard-form" class="form-grid">
       <label>Ingredient
-        <select name="ingredient_id" required>${ingredientOptions}</select>
+        <select name="ingredient_id" required ${hasIngredients ? "" : "disabled"}>${ingredientOptions}</select>
       </label>
       <label>Quantity
         <input name="quantity" type="number" step="0.01" value="${escapeHtml(state.cupboardForm.quantity)}" />
@@ -345,7 +371,7 @@ function renderAddCupboardItem() {
       <label>Shelf name
         <input name="shelf_name" value="${escapeHtml(state.cupboardForm.shelf_name)}" placeholder="e.g. Pantry" />
       </label>
-      <button type="submit">${state.loading ? "Adding..." : "Add cupboard item"}</button>
+      <button type="submit" ${hasIngredients && !state.cupboardSubmitting ? "" : "disabled"}>${state.cupboardSubmitting ? "Adding..." : "Add cupboard item"}</button>
     </form>
   `);
 }
@@ -542,26 +568,31 @@ async function onSubmitCupboardItem(event) {
   };
 
   if (!payload.ingredient_id) {
+    state.cupboardError = "Ingredient is required.";
     setFeedback("error", "Ingredient is required.");
     render();
     return;
   }
 
   try {
-    state.loading = true;
+    state.cupboardSubmitting = true;
+    state.cupboardError = "";
+    state.cupboardSuccess = "";
     setFeedback("notice", "Adding cupboard item...");
     render();
 
     await createUserStorecupboardItem(currentUserId(), payload);
     state.cupboardForm = defaultCupboardForm();
+    state.cupboardSuccess = "Cupboard item added.";
     setFeedback("success", "Cupboard item added.");
 
     await loadCupboardItems(false);
     window.location.hash = "#/cupboard";
   } catch (error) {
+    state.cupboardError = `Could not add cupboard item: ${error.message}`;
     setFeedback("error", `Could not add cupboard item: ${error.message}`);
   } finally {
-    state.loading = false;
+    state.cupboardSubmitting = false;
     render();
   }
 }
@@ -588,18 +619,22 @@ async function onSubmitCupboardUpdate(event) {
   };
 
   try {
-    state.loading = true;
+    state.cupboardSubmitting = true;
+    state.cupboardError = "";
+    state.cupboardSuccess = "";
     setFeedback("notice", "Updating cupboard item...");
     render();
 
     await updateUserStorecupboardItem(currentUserId(), itemId, payload);
     state.cupboardEditingId = "";
+    state.cupboardSuccess = "Cupboard item updated.";
     setFeedback("success", "Cupboard item updated.");
     await loadCupboardItems(false);
   } catch (error) {
+    state.cupboardError = `Could not update cupboard item: ${error.message}`;
     setFeedback("error", `Could not update cupboard item: ${error.message}`);
   } finally {
-    state.loading = false;
+    state.cupboardSubmitting = false;
     render();
   }
 }
@@ -617,18 +652,22 @@ async function onDeleteCupboardItem(event) {
   }
 
   try {
-    state.loading = true;
+    state.cupboardSubmitting = true;
+    state.cupboardError = "";
+    state.cupboardSuccess = "";
     setFeedback("notice", "Deleting cupboard item...");
     render();
 
     await deleteUserStorecupboardItem(currentUserId(), itemId);
     state.cupboardEditingId = "";
+    state.cupboardSuccess = "Cupboard item deleted.";
     setFeedback("success", "Cupboard item deleted.");
     await loadCupboardItems(false);
   } catch (error) {
+    state.cupboardError = `Could not delete cupboard item: ${error.message}`;
     setFeedback("error", `Could not delete cupboard item: ${error.message}`);
   } finally {
-    state.loading = false;
+    state.cupboardSubmitting = false;
     render();
   }
 }
@@ -743,8 +782,13 @@ async function loadIngredients() {
 }
 
 async function loadCupboardItems(renderOnComplete = true) {
+  state.cupboardError = "";
+  state.cupboardLoading = true;
+
   if (!currentUserId()) {
     state.cupboardItems = [];
+    state.cupboardLoaded = true;
+    state.cupboardLoading = false;
     if (renderOnComplete) {
       render();
     }
@@ -752,11 +796,17 @@ async function loadCupboardItems(renderOnComplete = true) {
   }
 
   try {
-    state.cupboardItems = await getUserStorecupboardItems(currentUserId());
+    const response = await getUserStorecupboardItems(currentUserId());
+    state.cupboardItems = Array.isArray(response) ? response : response?.items || [];
+    state.cupboardLoaded = true;
   } catch (error) {
     state.cupboardItems = [];
-    setFeedback("error", `Could not load cupboard items: ${error.message}`);
+    state.cupboardLoaded = true;
+    state.cupboardError = `Could not load cupboard items: ${error.message}`;
+    setFeedback("error", state.cupboardError);
   }
+
+  state.cupboardLoading = false;
 
   if (renderOnComplete) {
     render();
