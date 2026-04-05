@@ -693,6 +693,14 @@ function renderCupboardRows() {
 }
 
 function renderCupboard() {
+  const shelfOptions = Array.from(
+    new Set(
+      state.cupboardItems
+        .map((item) => String(item.shelf_name || "").trim())
+        .filter(Boolean),
+    ),
+  ).sort((a, b) => a.localeCompare(b));
+
   return card("Cupboard", `
     <div class="cupboard-toolbar">
       <input id="cupboard-search" type="search" placeholder="Search ingredient or shelf" value="${escapeHtml(state.cupboardQuery)}" aria-label="Search cupboard items" />
