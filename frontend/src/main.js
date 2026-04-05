@@ -1,8 +1,10 @@
 import {
   ApiError,
   createIngredient,
+  deleteIngredient,
   createUserFoodEntry,
   createUserStorecupboardItem,
+  getIngredient,
   deleteUserStorecupboardItem,
   getApiBaseUrl,
   getCurrentUser,
@@ -11,6 +13,7 @@ import {
   getUserStorecupboardItems,
   healthCheck,
   loginWithEmail,
+  updateIngredient,
   updateUserStorecupboardItem,
 } from "./api.js";
 
@@ -24,7 +27,11 @@ import {
   handleSubmitCupboardItem,
   handleSubmitCupboardUpdate,
 } from "./handlers/cupboardHandlers.js";
-import { handleSubmitIngredient } from "./handlers/ingredientHandlers.js";
+import {
+  handleDeleteIngredient,
+  handleSubmitIngredient,
+  handleSubmitIngredientUpdate,
+} from "./handlers/ingredientHandlers.js";
 
 const mealTimeOptions = ["am", "breakfast", "lunch", "pm", "dinner", "evening", "snack", "late_night"];
 const inputMethodOptions = ["text", "voice", "imported"];
@@ -85,6 +92,9 @@ const state = {
   foodForm: defaultFoodForm(),
   cupboardForm: defaultCupboardForm(),
   ingredientForm: defaultIngredientForm(),
+  ingredientDetailForm: null,
+  selectedIngredientId: "",
+  selectedIngredient: null,
   authForm: {
     email: "",
     password: "",
@@ -226,7 +236,7 @@ function getLoginErrorMessage(error) {
 }
 
 function setRouteFromHash() {
-  const hashRoute = window.location.hash.replace(/^#\/?/, "");
+  const hashRoute = window.location.hash.replace(/^#\/?/, "").split("?")[0];
   if (hashRoute) {
     state.route = hashRoute;
     return;
@@ -235,7 +245,9 @@ function setRouteFromHash() {
   const pathnameRouteMap = {
     "/": "dashboard",
     "/dashboard": "dashboard",
-    "/ingredients": "add-ingredient",
+    "/ingredients": "ingredients",
+    "/ingredients-list": "ingredients",
+    "/ingredient-detail": "ingredient-detail",
     "/add-ingredient": "add-ingredient",
     "/log-food": "log-food",
     "/entries": "entries",
@@ -269,6 +281,7 @@ function renderLayout(content) {
       ${navLink("cupboard", "Cupboard")}
       ${navLink("add-cupboard-item", "Add cupboard item")}
       ${navLink("add-ingredient", "Add ingredient")}
+      ${navLink("ingredients", "Ingredients list")}
     </nav>
     <section class="settings card">
       <h2>Session</h2>
@@ -324,6 +337,7 @@ function renderDashboard() {
         <a class="button secondary" href="#/cupboard">View cupboard</a>
         <a class="button secondary" href="#/add-cupboard-item">Add cupboard item</a>
         <a class="button secondary" href="#/add-ingredient">Add ingredient</a>
+        <a class="button secondary" href="#/ingredients">Ingredients list</a>
       </div>
     `)}
     ${card("Recent food entries", previewHtml)}
@@ -520,6 +534,76 @@ function renderAddIngredient() {
   `);
 }
 
+function toIngredientDetailRoute(ingredientId) {
+  return `#/ingredient-detail?id=${encodeURIComponent(ingredientId)}`;
+}
+
+function renderIngredientsList() {
+  if (state.loading && !state.ingredients.length) {
+    return card("Ingredients list", "<p>Loading ingredients...</p>");
+  }
+
+  if (!state.ingredients.length) {
+    return card("Ingredients list", `
+      <p class="empty">No ingredients found.</p>
+      <div class="actions">
+        <a class="button" href="#/add-ingredient">Add ingredient</a>
+      </div>
+    `);
+  }
+
+  return card("Ingredients list", `
+    <p class="meta">View all ingredients and open one to edit details.</p>
+    <ul class="list">
+      ${state.ingredients.map((ingredient) => `
+        <li>
+          <div><strong>${escapeHtml(ingredient.display_name)}</strong></div>
+          <div class="meta">${escapeHtml(ingredient.canonical_name)} · Category: ${escapeHtml(ingredient.category || "uncategorized")}</div>
+          <div class="actions">
+            <a class="button secondary" href="${toIngredientDetailRoute(ingredient.id)}">View details</a>
+          </div>
+        </li>
+      `).join("")}
+    </ul>
+  `);
+}
+
+function renderIngredientDetail() {
+  if (!state.selectedIngredientId) {
+    return card("Ingredient detail", "<p class='empty'>No ingredient selected.</p>");
+  }
+
+  if (!state.selectedIngredient || !state.ingredientDetailForm) {
+    return card("Ingredient detail", "<p>Loading ingredient details...</p>");
+  }
+
+  return card("Ingredient detail", `
+    <p class="meta">Edit or delete this ingredient.</p>
+    <form id="ingredient-detail-form" class="form-grid">
+      <label>Canonical name *
+        <input name="canonical_name" value="${escapeHtml(state.ingredientDetailForm.canonical_name)}" required />
+      </label>
+      <label>Display name *
+        <input name="display_name" value="${escapeHtml(state.ingredientDetailForm.display_name)}" required />
+      </label>
+      <label>Category *
+        <input name="category" value="${escapeHtml(state.ingredientDetailForm.category)}" required />
+      </label>
+      <label class="inline-checkbox">
+        <input name="is_seasonal" type="checkbox" ${state.ingredientDetailForm.is_seasonal ? "checked" : ""} />
+        Is seasonal
+      </label>
+      <label>Seasonal months
+        <input name="seasonal_months" value="${escapeHtml(state.ingredientDetailForm.seasonal_months)}" placeholder="comma-separated months, e.g. 6,7,8,9" />
+      </label>
+      <div class="actions">
+        <button type="submit">${state.loading ? "Saving..." : "Save changes"}</button>
+        <button type="button" id="delete-ingredient" ${state.loading ? "disabled" : ""}>Delete ingredient</button>
+      </div>
+    </form>
+  `);
+}
+
 function attachEvents() {
   const loginForm = document.querySelector("#login-form");
   if (loginForm) {
@@ -540,6 +624,13 @@ function attachEvents() {
   if (ingredientForm) {
     ingredientForm.addEventListener("submit", onSubmitIngredient);
   }
+
+  const ingredientDetailForm = document.querySelector("#ingredient-detail-form");
+  if (ingredientDetailForm) {
+    ingredientDetailForm.addEventListener("submit", onSubmitIngredientUpdate);
+  }
+
+  document.querySelector("#delete-ingredient")?.addEventListener("click", onDeleteIngredient);
 
   document.querySelector("#refresh-cupboard")?.addEventListener("click", async () => {
     await onRefreshCupboard();
@@ -650,6 +741,30 @@ async function onSubmitIngredient(event) {
   });
 }
 
+async function onSubmitIngredientUpdate(event) {
+  await handleSubmitIngredientUpdate(event, {
+    state,
+    render,
+    setFeedback,
+    ensureAuthenticated,
+    updateIngredient,
+    loadIngredientById,
+    handlePossiblyStaleSession,
+  });
+}
+
+async function onDeleteIngredient(event) {
+  await handleDeleteIngredient(event, {
+    state,
+    render,
+    setFeedback,
+    ensureAuthenticated,
+    deleteIngredient,
+    loadIngredients,
+    handlePossiblyStaleSession,
+  });
+}
+
 function onLogout() {
   handleLogout({ clearLocalSession, setFeedback, render });
 }
@@ -713,6 +828,39 @@ async function loadIngredients() {
     }
   } catch {
     state.ingredients = [];
+  }
+}
+
+async function loadIngredientById(ingredientId, renderOnComplete = true) {
+  if (!ingredientId) {
+    state.selectedIngredient = null;
+    state.ingredientDetailForm = null;
+    if (renderOnComplete) {
+      render();
+    }
+    return;
+  }
+
+  try {
+    const ingredient = await getIngredient(ingredientId);
+    state.selectedIngredient = ingredient;
+    state.ingredientDetailForm = {
+      canonical_name: ingredient.canonical_name || "",
+      display_name: ingredient.display_name || "",
+      category: ingredient.category || "",
+      is_seasonal: Boolean(ingredient.is_seasonal),
+      seasonal_months: Array.isArray(ingredient.seasonal_months) ? ingredient.seasonal_months.join(",") : "",
+    };
+  } catch (error) {
+    state.selectedIngredient = null;
+    state.ingredientDetailForm = null;
+    if (!handlePossiblyStaleSession(error)) {
+      setFeedback("error", `Could not load ingredient detail: ${error.message}`);
+    }
+  }
+
+  if (renderOnComplete) {
+    render();
   }
 }
 
@@ -783,6 +931,8 @@ function render() {
   if (state.route === "cupboard") content = renderCupboard();
   if (state.route === "add-cupboard-item") content = renderAddCupboardItem();
   if (state.route === "add-ingredient") content = renderAddIngredient();
+  if (state.route === "ingredients") content = renderIngredientsList();
+  if (state.route === "ingredient-detail") content = renderIngredientDetail();
 
   const bannerClass = state.feedback.type || "notice";
   const banner = state.feedback.message ? `<section class="card ${bannerClass}">${escapeHtml(state.feedback.message)}</section>` : "";
@@ -792,6 +942,8 @@ function render() {
 
 async function bootstrap() {
   setRouteFromHash();
+  const hashParams = new URLSearchParams(window.location.hash.split("?")[1] || "");
+  state.selectedIngredientId = hashParams.get("id") || "";
   await Promise.all([loadHealth(), loadIngredients()]);
   await restoreSessionIfPossible();
 
@@ -799,11 +951,17 @@ async function bootstrap() {
     await Promise.all([loadFoodEntries(false), loadCupboardItems(false)]);
   }
 
+  if (state.route === "ingredient-detail") {
+    await loadIngredientById(state.selectedIngredientId, false);
+  }
+
   render();
 }
 
 window.addEventListener("hashchange", async () => {
   setRouteFromHash();
+  const hashParams = new URLSearchParams(window.location.hash.split("?")[1] || "");
+  state.selectedIngredientId = hashParams.get("id") || "";
 
   if (state.route === "entries") {
     await loadFoodEntries(false);
@@ -811,6 +969,14 @@ window.addEventListener("hashchange", async () => {
 
   if (state.route === "cupboard") {
     await loadCupboardItems(false);
+  }
+
+  if (state.route === "ingredients") {
+    await loadIngredients();
+  }
+
+  if (state.route === "ingredient-detail") {
+    await loadIngredientById(state.selectedIngredientId, false);
   }
 
   clearFeedback();

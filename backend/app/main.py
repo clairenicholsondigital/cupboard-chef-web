@@ -138,6 +138,14 @@ class IngredientOut(BaseModel):
     seasonal_months: Optional[List[int]] = None
 
 
+class IngredientUpdate(BaseModel):
+    canonical_name: Optional[str] = Field(default=None, min_length=1)
+    display_name: Optional[str] = Field(default=None, min_length=1)
+    category: Optional[str] = None
+    is_seasonal: Optional[bool] = None
+    seasonal_months: Optional[List[int]] = None
+
+
 class IngredientListResponse(BaseModel):
     items: List[IngredientOut]
     total: int
@@ -991,6 +999,128 @@ def create_ingredient(payload: IngredientCreate):
         "is_seasonal": row[4],
         "seasonal_months": row[5],
     }
+
+
+@app.get("/ingredients/{ingredient_id}", response_model=IngredientOut)
+def get_ingredient(ingredient_id: UUID):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    select
+                        id,
+                        canonical_name,
+                        display_name,
+                        category,
+                        is_seasonal,
+                        seasonal_months
+                    from ingredient_catalogue
+                    where id = %s
+                    """,
+                    (str(ingredient_id),),
+                )
+                row = cur.fetchone()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not load ingredient.")
+
+    if not row:
+        not_found("Ingredient not found.")
+
+    return {
+        "id": row[0],
+        "canonical_name": row[1],
+        "display_name": row[2],
+        "category": row[3],
+        "is_seasonal": row[4],
+        "seasonal_months": row[5],
+    }
+
+
+@app.put("/ingredients/{ingredient_id}", response_model=IngredientOut)
+def update_ingredient(ingredient_id: UUID, payload: IngredientUpdate):
+    update_data = payload.model_dump(exclude_unset=True)
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields provided for update.")
+
+    if "canonical_name" in update_data and update_data["canonical_name"] is not None:
+        update_data["canonical_name"] = update_data["canonical_name"].strip().lower()
+    if "display_name" in update_data and update_data["display_name"] is not None:
+        update_data["display_name"] = update_data["display_name"].strip()
+    if "category" in update_data and update_data["category"] is not None:
+        update_data["category"] = update_data["category"].strip()
+
+    if update_data.get("is_seasonal") is False:
+        update_data["seasonal_months"] = []
+
+    set_clauses = [f"{field} = %s" for field in update_data.keys()]
+    params = [update_data[field] for field in update_data.keys()]
+    params.append(str(ingredient_id))
+
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    update ingredient_catalogue
+                    set {', '.join(set_clauses)}
+                    where id = %s
+                    returning
+                        id,
+                        canonical_name,
+                        display_name,
+                        category,
+                        is_seasonal,
+                        seasonal_months
+                    """,
+                    tuple(params),
+                )
+                row = cur.fetchone()
+            conn.commit()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not update ingredient.")
+
+    if not row:
+        not_found("Ingredient not found.")
+
+    return {
+        "id": row[0],
+        "canonical_name": row[1],
+        "display_name": row[2],
+        "category": row[3],
+        "is_seasonal": row[4],
+        "seasonal_months": row[5],
+    }
+
+
+@app.delete("/ingredients/{ingredient_id}")
+def delete_ingredient(ingredient_id: UUID):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    delete from ingredient_catalogue
+                    where id = %s
+                    returning id
+                    """,
+                    (str(ingredient_id),),
+                )
+                row = cur.fetchone()
+            conn.commit()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        server_error("Could not delete ingredient.")
+
+    if not row:
+        not_found("Ingredient not found.")
+
+    return {"deleted": True, "id": row[0]}
 
 
 # -------------------------------------------------------------------
