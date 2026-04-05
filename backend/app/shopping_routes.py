@@ -31,8 +31,10 @@ def _b64url_decode(value: str) -> bytes:
 
 
 def _verify_auth_token(token: str) -> Dict[str, Any]:
+    token_value = token.strip()
+
+    # Primary format: JWT-like token (<header>.<payload>.<signature>).
     try:
-        token_value = token.strip()
         signing_input, signature_segment = token_value.rsplit(".", 1)
         expected_signature = hmac.new(
             AUTH_TOKEN_SECRET.encode("utf-8"),
@@ -58,6 +60,37 @@ def _verify_auth_token(token: str) -> Dict[str, Any]:
         return {
             "user_id": user_id,
             "email": email,
+        }
+    except Exception:
+        pass
+
+    # Backward-compatible format used by /auth/login in app.main:
+    # base64url("user_id:email:expires_at:hex_signature")
+    try:
+        decoded = _b64url_decode(token_value).decode("utf-8")
+        user_id, email, expires_at, signature = decoded.split(":", 3)
+
+        payload = f"{user_id}:{email}:{expires_at}"
+        expected_signature = hmac.new(
+            AUTH_TOKEN_SECRET.encode("utf-8"),
+            payload.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+
+        if not hmac.compare_digest(signature, expected_signature):
+            raise ValueError("bad signature")
+
+        if int(expires_at) < int(time.time()):
+            raise ValueError("expired")
+
+        normalized_email = email.strip().lower()
+        normalized_user_id = user_id.strip()
+        if not normalized_user_id or not normalized_email:
+            raise ValueError("missing claims")
+
+        return {
+            "user_id": normalized_user_id,
+            "email": normalized_email,
         }
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid authentication token.")

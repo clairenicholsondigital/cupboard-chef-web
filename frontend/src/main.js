@@ -327,14 +327,17 @@ function clearLocalSession() {
 }
 
 function isAuthError(error) {
-  const message = error instanceof ApiError || error instanceof Error ? error.message : String(error || "");
+  if (error instanceof ApiError) {
+    return error.status === 401 || error.status === 403;
+  }
+
+  const message = error instanceof Error ? error.message : String(error || "");
   const normalized = message.toLowerCase();
 
   return (
     normalized.includes("invalid authentication token") ||
     normalized.includes("authentication token has expired") ||
-    normalized.includes("unauthorized") ||
-    normalized.includes("authenticated user was not found")
+    normalized.includes("unauthorized")
   );
 }
 
