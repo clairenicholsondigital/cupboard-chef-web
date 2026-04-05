@@ -153,6 +153,23 @@ export function createIngredient(data) {
   });
 }
 
+export function getIngredient(ingredientId) {
+  return request(`/ingredients/${encodeURIComponent(ingredientId)}`, { method: "GET" });
+}
+
+export function updateIngredient(ingredientId, data) {
+  return request(`/ingredients/${encodeURIComponent(ingredientId)}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export function deleteIngredient(ingredientId) {
+  return request(`/ingredients/${encodeURIComponent(ingredientId)}`, {
+    method: "DELETE",
+  });
+}
+
 export function getFoodEntries(params = {}) {
   return request(`/food-entries${buildQueryString(params)}`, { method: "GET" });
 }
