@@ -212,6 +212,16 @@ button:hover,
   background: #fecaca;
 }
 
+.button-danger-outline {
+  background: transparent;
+  color: #9f1239;
+  border: 1px solid #fecdd3;
+}
+
+.button-danger-outline:hover {
+  background: #fff1f2;
+}
+
 .button-ghost {
   background: transparent;
   color: var(--muted);
@@ -233,6 +243,15 @@ button:hover,
   margin-top: 0.75rem;
 }
 
+.actions-compact {
+  margin-top: 0;
+  gap: 0.45rem;
+}
+
+.actions-quiet {
+  margin-top: 0.35rem;
+}
+
 .list {
   margin: 0.7rem 0 0;
   padding: 0;
@@ -246,6 +265,46 @@ button:hover,
   background: var(--surface-soft);
   border-radius: 14px;
   padding: 0.72rem;
+}
+
+.cupboard-item-card {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.cupboard-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-transform: capitalize;
+  padding: 0.24rem 0.5rem;
+  border-radius: 999px;
+}
+
+.chip-stock {
+  color: #1d4ed8;
+  background: #dbeafe;
+}
+
+.cupboard-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem 0.65rem;
+}
+
+.meta-label {
+  display: block;
+  font-size: 0.74rem;
+  line-height: 1.2;
+  color: #526074;
 }
 
 .meta {
@@ -342,5 +401,28 @@ code {
 
   .screen-content {
     gap: 1rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .app-bar-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .actions-compact {
+    width: 100%;
+  }
+
+  .actions-compact .button {
+    flex: 1;
+  }
+
+  .cupboard-meta-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .actions-quiet .button {
+    flex: 1;
   }
 }

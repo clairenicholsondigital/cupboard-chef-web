@@ -27,7 +27,6 @@ import { handleSubmitFoodEntry } from "./handlers/foodHandlers.js";
 import {
   handleCancelCupboardEdit,
   handleDeleteCupboardItem,
-  handleRefreshCupboard,
   handleStartCupboardEdit,
   handleSubmitCupboardItem,
   handleSubmitCupboardUpdate,
@@ -334,6 +333,10 @@ function setRouteFromHash() {
   state.route = pathnameRouteMap[window.location.pathname] || "dashboard";
 }
 
+function isAuthenticated() {
+  return Boolean(currentUserId());
+}
+
 function escapeHtml(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -366,9 +369,33 @@ function formatDateTimeForInput(value) {
   return `${year}-${month}-${day}T${hours}:${minutes}`;
 }
 
+function formatFriendlyDate(value) {
+  if (!value) return "Not set";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return String(value);
+  return parsed.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function formatFriendlyDateTime(value) {
+  if (!value) return "Not set";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return String(value);
+  return parsed.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function formatStockLabel(value) {
+  return String(value || "unknown").replaceAll("_", " ");
+}
+
 function renderLayout(content) {
   const app = document.querySelector("#app");
-  const userId = currentUserId();
+  const authenticated = isAuthenticated();
   const activePage = PAGE_META[state.route] || { title: "Cupboard Chef", subtitle: "" };
   const primaryTabs = ROUTE_META.filter((item) => PRIMARY_TAB_ROUTES.includes(item.route));
   app.innerHTML = `
@@ -377,24 +404,25 @@ function renderLayout(content) {
         <p class="app-badge">Cupboard Chef</p>
         <div class="app-bar-row">
           <h1>${escapeHtml(activePage.title)}</h1>
-          <button id="logout" type="button" class="button button-ghost" ${!userId ? "disabled" : ""}>Log out</button>
+          ${authenticated ? `
+            <div class="actions actions-compact">
+              <a class="button button-ghost ${state.route === "profile" ? "active" : ""}" href="#/profile">Account</a>
+              <button id="logout" type="button" class="button button-ghost">Log out</button>
+            </div>
+          ` : ""}
         </div>
         ${activePage.subtitle ? `<p class="app-subtitle">${escapeHtml(activePage.subtitle)}</p>` : ""}
-        <div class="actions">
-          <a class="button button-secondary" href="/login">Login page</a>
-          <a class="button button-secondary" href="/profile">Profile page</a>
-        </div>
       </header>
       <main class="screen-content">${content}</main>
-    <nav class="bottom-tabs" aria-label="Bottom navigation tabs">
-      ${primaryTabs.map((item) => navLink(item.route, item.label, item.icon, "tab")).join("")}
-    </nav>
+      ${authenticated ? `
+        <nav class="bottom-tabs" aria-label="Bottom navigation tabs">
+          ${primaryTabs.map((item) => navLink(item.route, item.label, item.icon, "tab")).join("")}
+        </nav>
+      ` : ""}
     </div>
   `;
 
-  document.querySelector("#logout")?.addEventListener("click", () => {
-    onLogout();
-  });
+  document.querySelector("#logout")?.addEventListener("click", onLogout);
 }
 
 function navLink(route, label, Icon, style = "pill") {
@@ -432,7 +460,7 @@ function renderDashboard() {
 
 function renderLogin() {
   return card("Sign in", `
-    <p class="meta">Authenticate with your account to enable syncing and editing.</p>
+    <p class="meta">Sign in to manage cupboard items, ingredients, meal logs, and recipes.</p>
     <form id="login-form" class="form-grid">
       <label>Email address
         <input name="email" type="email" value="${escapeHtml(state.authForm.email)}" autocomplete="email" required />
@@ -446,13 +474,15 @@ function renderLogin() {
 }
 
 function renderProfile() {
-  const userId = currentUserId();
-  return card("Session & API status", `
-    <p class="meta">Current user UUID: <code>${escapeHtml(userId || "Not signed in")}</code></p>
-    <p class="meta">Current email: <code>${escapeHtml(state.currentUser?.email || "Not signed in")}</code></p>
-    <p class="meta">Stored token: <code>${getStoredAccessToken() ? "Present" : "None"}</code></p>
+  return card("Account", `
+    <p class="meta">Signed in as <strong>${escapeHtml(state.currentUser?.email || "Not signed in")}</strong></p>
+    <p class="meta">Display name: <code>${escapeHtml(state.currentUser?.display_name || "Not set")}</code></p>
+    <p class="meta">User ID: <code>${escapeHtml(state.currentUser?.user_id || "Not signed in")}</code></p>
     <p class="meta">API base URL: <code>${escapeHtml(getApiBaseUrl())}</code></p>
     ${state.health ? `<p class="${state.health.status === "ok" ? "success" : "error"}">API health: ${escapeHtml(state.health.status)}</p>` : ""}
+    <div class="actions">
+      <button id="logout-inline" type="button" class="button button-secondary button-block">Log out</button>
+    </div>
   `, "card-soft");
 }
 
@@ -564,13 +594,20 @@ function renderCupboardRows() {
     }
 
     return `
-      <li>
-        <div><strong>${escapeHtml(item.ingredient_display_name || item.ingredient_canonical_name || item.ingredient_id)}</strong></div>
-        <div class="meta">Qty: ${escapeHtml(item.quantity ?? "n/a")} ${escapeHtml(item.unit || "")} · Status: ${escapeHtml(item.stock_status || "n/a")} · Shelf: ${escapeHtml(item.shelf_name || "n/a")}</div>
-        <div class="meta">Best before: ${escapeHtml(item.best_before_date || "n/a")} · Next reminder: ${escapeHtml(item.next_reminder_at || "n/a")}</div>
-        <div class="actions">
+      <li class="cupboard-item-card">
+        <div class="cupboard-item-head">
+          <strong>${escapeHtml(item.ingredient_display_name || item.ingredient_canonical_name || item.ingredient_id)}</strong>
+          <span class="chip chip-stock">${escapeHtml(formatStockLabel(item.stock_status || "n/a"))}</span>
+        </div>
+        <div class="cupboard-meta-grid">
+          <p class="meta"><span class="meta-label">Quantity</span>${escapeHtml(item.quantity ?? "n/a")} ${escapeHtml(item.unit || "")}</p>
+          <p class="meta"><span class="meta-label">Shelf</span>${escapeHtml(item.shelf_name || "Not set")}</p>
+          <p class="meta"><span class="meta-label">Best before</span>${escapeHtml(formatFriendlyDate(item.best_before_date))}</p>
+          <p class="meta"><span class="meta-label">Next reminder</span>${escapeHtml(formatFriendlyDateTime(item.next_reminder_at))}</p>
+        </div>
+        <div class="actions actions-quiet">
           <button type="button" class="button button-secondary cupboard-edit" data-item-id="${item.id}">Edit</button>
-          <button type="button" class="button button-danger cupboard-delete" data-item-id="${item.id}">Delete</button>
+          <button type="button" class="button button-danger-outline cupboard-delete" data-item-id="${item.id}">Delete</button>
         </div>
       </li>
     `;
@@ -579,10 +616,9 @@ function renderCupboardRows() {
 
 function renderCupboard() {
   return card("Cupboard", `
-    <p class="meta">Manage quantities, stock state, and shelf placement.</p>
+    <p class="meta">Manage quantities, stock status, shelf placement, and reminders.</p>
     <div class="actions">
       <a class="button button-primary" href="#/add-cupboard-item">Add cupboard item</a>
-      <button id="refresh-cupboard" type="button" class="button button-secondary" ${state.cupboardLoading ? "disabled" : ""}>${state.cupboardLoading ? "Refreshing..." : "Refresh"}</button>
     </div>
     ${state.cupboardSuccess ? `<p class="success">${escapeHtml(state.cupboardSuccess)}</p>` : ""}
     ${renderCupboardRows()}
@@ -867,10 +903,6 @@ function attachEvents() {
   document.querySelector("#delete-ingredient")?.addEventListener("click", onDeleteIngredient);
   document.querySelector("#delete-recipe")?.addEventListener("click", onDeleteRecipe);
 
-  document.querySelector("#refresh-cupboard")?.addEventListener("click", async () => {
-    await onRefreshCupboard();
-  });
-
   document.querySelectorAll(".cupboard-edit").forEach((button) => {
     button.addEventListener("click", (event) => {
       onStartCupboardEdit(event);
@@ -890,6 +922,8 @@ function attachEvents() {
   document.querySelectorAll(".cupboard-delete").forEach((button) => {
     button.addEventListener("click", onDeleteCupboardItem);
   });
+
+  document.querySelector("#logout-inline")?.addEventListener("click", onLogout);
 }
 
 async function onSubmitLogin(event) {
@@ -1041,10 +1075,6 @@ async function onDeleteRecipe(event) {
 
 function onLogout() {
   handleLogout({ clearLocalSession, setFeedback, render });
-}
-
-async function onRefreshCupboard() {
-  await handleRefreshCupboard({ loadCupboardItems });
 }
 
 function onStartCupboardEdit(event) {
@@ -1262,6 +1292,14 @@ async function restoreSessionIfPossible() {
 }
 
 function render() {
+  if (!isAuthenticated()) {
+    state.route = "login";
+  }
+
+  if (isAuthenticated() && state.route === "login") {
+    state.route = "dashboard";
+  }
+
   let content = "";
 
   if (state.route === "dashboard") content = renderDashboard();

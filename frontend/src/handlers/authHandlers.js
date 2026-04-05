@@ -57,6 +57,7 @@ export async function handleSubmitLogin(event, deps) {
 
     setFeedback("success", `Signed in as ${identity.email}.`);
     await Promise.all([loadFoodEntries(false), loadCupboardItems(false), loadRecipes?.(false)]);
+    window.location.hash = "#/dashboard";
   } catch (error) {
     clearLocalSession();
     setFeedback("error", getLoginErrorMessage(error));
@@ -71,5 +72,6 @@ export function handleLogout(deps) {
 
   clearLocalSession();
   setFeedback("notice", "Signed out.");
+  window.location.hash = "#/login";
   render();
 }
