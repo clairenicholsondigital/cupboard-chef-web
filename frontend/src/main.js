@@ -65,6 +65,7 @@ import React from "https://esm.sh/react@18.3.1";
 import { renderToStaticMarkup } from "https://esm.sh/react-dom@18.3.1/server";
 import {
   BookOpen,
+  ChevronRight,
   ClipboardList,
   CookingPot,
   Home,
@@ -855,6 +856,8 @@ function toIngredientDetailRoute(ingredientId) {
 }
 
 function renderIngredientsList() {
+  const chevronIcon = renderToStaticMarkup(React.createElement(ChevronRight, { size: 18, strokeWidth: 2 }));
+
   if (state.loading && !state.ingredients.length) {
     return card("Ingredients list", "<p>Loading ingredients...</p>");
   }
@@ -870,14 +873,17 @@ function renderIngredientsList() {
 
   return card("Ingredients list", `
     <p class="meta">View all ingredients and open one to edit details.</p>
-    <ul class="list list-polished">
+    <ul class="list ingredient-list">
       ${state.ingredients.map((ingredient) => `
-        <li>
-          <div><strong>${escapeHtml(ingredient.display_name)}</strong></div>
-          <div class="meta">${escapeHtml(ingredient.canonical_name)} · Category: ${escapeHtml(ingredient.category || "uncategorized")}</div>
-          <div class="actions">
-            <a class="button button-secondary" href="${toIngredientDetailRoute(ingredient.id)}">View details</a>
-          </div>
+        <li class="ingredient-list-item">
+          <a
+            class="ingredient-list-link"
+            href="${toIngredientDetailRoute(ingredient.id)}"
+            aria-label="Open ingredient details for ${escapeHtml(ingredient.display_name || ingredient.canonical_name || "ingredient")}"
+          >
+            <strong class="ingredient-list-name">${escapeHtml(ingredient.display_name)}</strong>
+            <span class="ingredient-list-chevron" aria-hidden="true">${chevronIcon}</span>
+          </a>
         </li>
       `).join("")}
     </ul>
