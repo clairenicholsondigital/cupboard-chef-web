@@ -48,10 +48,13 @@ import {
   ClipboardList,
   CookingPot,
   Home,
+  MoreHorizontal,
+  Pencil,
   PlusCircle,
   ScrollText,
   Soup,
   SquarePlus,
+  Trash2,
   UtensilsCrossed,
 } from "https://esm.sh/lucide-react@0.469.0?deps=react@18.3.1";
 
@@ -165,6 +168,9 @@ const state = {
     password: "",
   },
   cupboardEditingId: "",
+  cupboardQuery: "",
+  cupboardSort: "shelf",
+  cupboardShelfFilter: "",
   feedback: { type: "", message: "" },
   health: null,
 };
@@ -393,6 +399,69 @@ function formatStockLabel(value) {
   return String(value || "unknown").replaceAll("_", " ");
 }
 
+function stockStatusClass(value) {
+  const normalized = String(value || "").toLowerCase();
+  if (normalized === "in_stock") return "status-in-stock";
+  if (normalized === "low") return "status-low";
+  if (normalized === "out_of_stock") return "status-out-of-stock";
+  return "status-unknown";
+}
+
+function isExpiringSoon(value) {
+  if (!value) return false;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return false;
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  date.setHours(0, 0, 0, 0);
+  const diffDays = Math.ceil((date - now) / (1000 * 60 * 60 * 24));
+  return diffDays >= 0 && diffDays <= 3;
+}
+
+function getCupboardVisibleItems() {
+  const query = state.cupboardQuery.trim().toLowerCase();
+  const shelfFilter = state.cupboardShelfFilter.trim().toLowerCase();
+  const normalizedItems = [...state.cupboardItems];
+
+  const filteredByQuery = query
+    ? normalizedItems.filter((item) => {
+      const name = item.ingredient_display_name || item.ingredient_canonical_name || item.ingredient_id || "";
+      const shelf = item.shelf_name || "";
+      return String(name).toLowerCase().includes(query) || String(shelf).toLowerCase().includes(query);
+    })
+    : normalizedItems;
+
+  const filtered = shelfFilter
+    ? filteredByQuery.filter((item) => String(item.shelf_name || "").toLowerCase() === shelfFilter)
+    : filteredByQuery;
+
+  const alphabetical = (a, b) => {
+    const aName = String(a.ingredient_display_name || a.ingredient_canonical_name || a.ingredient_id || "").toLowerCase();
+    const bName = String(b.ingredient_display_name || b.ingredient_canonical_name || b.ingredient_id || "").toLowerCase();
+    return aName.localeCompare(bName);
+  };
+
+  if (state.cupboardSort === "expiry") {
+    return filtered.sort((a, b) => {
+      const aDate = a.best_before_date ? new Date(a.best_before_date).getTime() : Number.POSITIVE_INFINITY;
+      const bDate = b.best_before_date ? new Date(b.best_before_date).getTime() : Number.POSITIVE_INFINITY;
+      if (aDate !== bDate) return aDate - bDate;
+      return alphabetical(a, b);
+    });
+  }
+
+  if (state.cupboardSort === "name") {
+    return filtered.sort(alphabetical);
+  }
+
+  return filtered.sort((a, b) => {
+    const aShelf = String(a.shelf_name || "zzzz").toLowerCase();
+    const bShelf = String(b.shelf_name || "zzzz").toLowerCase();
+    if (aShelf !== bShelf) return aShelf.localeCompare(bShelf);
+    return alphabetical(a, b);
+  });
+}
+
 function renderLayout(content) {
   const app = document.querySelector("#app");
   const authenticated = isAuthenticated();
@@ -542,6 +611,8 @@ function renderEntries() {
 }
 
 function renderCupboardRows() {
+  const visibleItems = getCupboardVisibleItems();
+
   if (state.cupboardLoading) {
     return "<p>Loading cupboard items...</p>";
   }
@@ -558,11 +629,19 @@ function renderCupboardRows() {
     return "<p class='empty'>No cupboard items yet. Add one to get started.</p>";
   }
 
-  return `<ul class="list list-polished">${state.cupboardItems.map((item) => {
+  if (!visibleItems.length) {
+    return "<p class='empty'>No ingredients match your search.</p>";
+  }
+
+  const moreIcon = renderToStaticMarkup(React.createElement(MoreHorizontal, { size: 18, strokeWidth: 2 }));
+  const editIcon = renderToStaticMarkup(React.createElement(Pencil, { size: 16, strokeWidth: 2 }));
+  const deleteIcon = renderToStaticMarkup(React.createElement(Trash2, { size: 16, strokeWidth: 2 }));
+
+  return `<ul class="list list-polished cupboard-compact-list">${visibleItems.map((item) => {
     const isEditing = state.cupboardEditingId === item.id;
     if (isEditing) {
       return `
-        <li>
+        <li class="cupboard-row-editing">
           <form class="form-grid cupboard-update-form" data-item-id="${item.id}">
             <label>Quantity
               <input name="quantity" type="number" step="0.01" value="${escapeHtml(item.quantity ?? "")}" />
@@ -594,20 +673,25 @@ function renderCupboardRows() {
     }
 
     return `
-      <li class="cupboard-item-card">
-        <div class="cupboard-item-head">
-          <strong>${escapeHtml(item.ingredient_display_name || item.ingredient_canonical_name || item.ingredient_id)}</strong>
-          <span class="chip chip-stock">${escapeHtml(formatStockLabel(item.stock_status || "n/a"))}</span>
+      <li class="cupboard-item-row">
+        <div class="cupboard-row-main">
+          <div class="cupboard-row-topline">
+            <strong class="cupboard-item-name">${escapeHtml(item.ingredient_display_name || item.ingredient_canonical_name || item.ingredient_id)}</strong>
+            <span class="chip chip-stock ${stockStatusClass(item.stock_status)}">${escapeHtml(formatStockLabel(item.stock_status || "n/a"))}</span>
+          </div>
+          <p class="meta cupboard-inline-meta">${escapeHtml(item.quantity ?? "n/a")} ${escapeHtml(item.unit || "")} • ${escapeHtml(item.shelf_name || "No shelf")}</p>
+          <p class="meta cupboard-inline-meta">${item.best_before_date ? `Best before ${escapeHtml(formatFriendlyDate(item.best_before_date))}` : "No best before date"} ${isExpiringSoon(item.best_before_date) ? '<span class="chip chip-warning">Expiring soon</span>' : ""}</p>
         </div>
-        <div class="cupboard-meta-grid">
-          <p class="meta"><span class="meta-label">Quantity</span>${escapeHtml(item.quantity ?? "n/a")} ${escapeHtml(item.unit || "")}</p>
-          <p class="meta"><span class="meta-label">Shelf</span>${escapeHtml(item.shelf_name || "Not set")}</p>
-          <p class="meta"><span class="meta-label">Best before</span>${escapeHtml(formatFriendlyDate(item.best_before_date))}</p>
-          <p class="meta"><span class="meta-label">Next reminder</span>${escapeHtml(formatFriendlyDateTime(item.next_reminder_at))}</p>
-        </div>
-        <div class="actions actions-quiet">
-          <button type="button" class="button button-secondary cupboard-edit" data-item-id="${item.id}">Edit</button>
-          <button type="button" class="button button-danger-outline cupboard-delete" data-item-id="${item.id}">Delete</button>
+        <div class="cupboard-row-actions">
+          <details class="row-menu">
+            <summary class="row-menu-trigger" aria-label="Open actions for ${escapeHtml(item.ingredient_display_name || item.ingredient_canonical_name || item.ingredient_id)}">
+              ${moreIcon}
+            </summary>
+            <div class="row-menu-panel">
+              <button type="button" class="button button-secondary cupboard-edit" data-item-id="${item.id}">${editIcon}<span>Edit</span></button>
+              <button type="button" class="button button-danger-outline cupboard-delete" data-item-id="${item.id}">${deleteIcon}<span>Delete</span></button>
+            </div>
+          </details>
         </div>
       </li>
     `;
@@ -615,10 +699,27 @@ function renderCupboardRows() {
 }
 
 function renderCupboard() {
+  const shelfOptions = Array.from(
+    new Set(
+      state.cupboardItems
+        .map((item) => String(item.shelf_name || "").trim())
+        .filter(Boolean),
+    ),
+  ).sort((a, b) => a.localeCompare(b));
+
   return card("Cupboard", `
-    <p class="meta">Manage quantities, stock status, shelf placement, and reminders.</p>
-    <div class="actions">
-      <a class="button button-primary" href="#/add-cupboard-item">Add cupboard item</a>
+    <div class="cupboard-toolbar">
+      <input id="cupboard-search" type="search" placeholder="Search ingredient or shelf" value="${escapeHtml(state.cupboardQuery)}" aria-label="Search cupboard items" />
+      <select id="cupboard-sort" aria-label="Sort cupboard items">
+        <option value="shelf" ${state.cupboardSort === "shelf" ? "selected" : ""}>Sort: Shelf</option>
+        <option value="expiry" ${state.cupboardSort === "expiry" ? "selected" : ""}>Sort: Expiry</option>
+        <option value="name" ${state.cupboardSort === "name" ? "selected" : ""}>Sort: Name</option>
+      </select>
+      <select id="cupboard-shelf-filter" aria-label="Filter cupboard by shelf">
+        <option value="">All shelves</option>
+        ${shelfOptions.map((shelfName) => `<option value="${escapeHtml(shelfName)}" ${state.cupboardShelfFilter === shelfName ? "selected" : ""}>Shelf: ${escapeHtml(shelfName)}</option>`).join("")}
+      </select>
+      <a class="button button-primary cupboard-add-button" href="#/add-cupboard-item">Add</a>
     </div>
     ${state.cupboardSuccess ? `<p class="success">${escapeHtml(state.cupboardSuccess)}</p>` : ""}
     ${renderCupboardRows()}
@@ -922,6 +1023,30 @@ function attachEvents() {
   document.querySelectorAll(".cupboard-delete").forEach((button) => {
     button.addEventListener("click", onDeleteCupboardItem);
   });
+
+  const cupboardSearch = document.querySelector("#cupboard-search");
+  if (cupboardSearch) {
+    cupboardSearch.addEventListener("input", (event) => {
+      state.cupboardQuery = event.target.value;
+      render();
+    });
+  }
+
+  const cupboardSort = document.querySelector("#cupboard-sort");
+  if (cupboardSort) {
+    cupboardSort.addEventListener("change", (event) => {
+      state.cupboardSort = event.target.value;
+      render();
+    });
+  }
+
+  const cupboardShelfFilter = document.querySelector("#cupboard-shelf-filter");
+  if (cupboardShelfFilter) {
+    cupboardShelfFilter.addEventListener("change", (event) => {
+      state.cupboardShelfFilter = event.target.value;
+      render();
+    });
+  }
 
   document.querySelector("#logout-inline")?.addEventListener("click", onLogout);
 }
