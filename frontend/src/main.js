@@ -70,6 +70,20 @@ const ROUTE_META = [
   { route: "recipes", label: "Recipes", icon: BookOpen },
   { route: "add-recipe", label: "Add recipe", icon: ScrollText },
 ];
+const PRIMARY_TAB_ROUTES = ["dashboard", "ingredients", "cupboard", "recipes"];
+const PAGE_META = {
+  dashboard: { title: "Dashboard", subtitle: "Track meals, cupboard stock, and recipes in one place." },
+  "log-food": { title: "Log food", subtitle: "Capture what you ate in seconds." },
+  entries: { title: "Food entries", subtitle: "Review your recent meal logs." },
+  cupboard: { title: "Cupboard", subtitle: "Keep your ingredients and stock levels up to date." },
+  "add-cupboard-item": { title: "Add cupboard item", subtitle: "Add an ingredient to your cupboard inventory." },
+  "add-ingredient": { title: "Add ingredient", subtitle: "Create a reusable ingredient in your catalog." },
+  ingredients: { title: "Ingredients", subtitle: "Browse and edit your ingredient catalog." },
+  "ingredient-detail": { title: "Ingredient detail", subtitle: "Update ingredient information." },
+  recipes: { title: "Recipes", subtitle: "Browse and manage saved recipes." },
+  "add-recipe": { title: "Add recipe", subtitle: "Create a new recipe for your collection." },
+  "recipe-detail": { title: "Recipe detail", subtitle: "Edit recipe information and instructions." },
+};
 
 // Use multiple keys so the frontend stays compatible with whichever key api.js is reading.
 const AUTH_STORAGE_KEYS = [
@@ -325,27 +339,31 @@ function escapeHtml(value) {
 function renderLayout(content) {
   const app = document.querySelector("#app");
   const userId = currentUserId();
+  const activePage = PAGE_META[state.route] || { title: "Cupboard Chef", subtitle: "" };
+  const primaryTabs = ROUTE_META.filter((item) => PRIMARY_TAB_ROUTES.includes(item.route));
   app.innerHTML = `
-    <div class="app-mobile-shell">
-    <header class="header">
-      <h1>Cupboard Chef</h1>
-      <p>Food logging and cupboard tracking connected to your live API.</p>
-    </header>
-    <nav class="nav">
-      ${ROUTE_META.map((item) => navLink(item.route, item.label, item.icon, "pill")).join("")}
-    </nav>
-    <section class="settings card">
-      <h2>Session</h2>
-      <p class="meta">Current user UUID: <code>${escapeHtml(userId || "Not signed in")}</code></p>
-      <p class="meta">Current email: <code>${escapeHtml(state.currentUser?.email || "Not signed in")}</code></p>
-      <p class="meta">Stored token: <code>${getStoredAccessToken() ? "Present" : "None"}</code></p>
-      <button id="logout" type="button" ${!userId ? "disabled" : ""}>Log out</button>
-      <p class="meta">API base URL: <code>${escapeHtml(getApiBaseUrl())}</code></p>
-      ${state.health ? `<p class="${state.health.status === "ok" ? "success" : "error"}">API health: ${escapeHtml(state.health.status)}</p>` : ""}
-    </section>
-    <main>${content}</main>
+    <div class="app-shell app-mobile-shell">
+      <header class="app-bar">
+        <p class="app-badge">Cupboard Chef</p>
+        <div class="app-bar-row">
+          <h1>${escapeHtml(activePage.title)}</h1>
+          <button id="logout" type="button" class="button button-ghost" ${!userId ? "disabled" : ""}>Log out</button>
+        </div>
+        ${activePage.subtitle ? `<p class="app-subtitle">${escapeHtml(activePage.subtitle)}</p>` : ""}
+      </header>
+      <main class="screen-content">${content}</main>
+      <details class="debug-panel">
+        <summary>Session & API status</summary>
+        <div class="debug-content">
+          <p class="meta">Current user UUID: <code>${escapeHtml(userId || "Not signed in")}</code></p>
+          <p class="meta">Current email: <code>${escapeHtml(state.currentUser?.email || "Not signed in")}</code></p>
+          <p class="meta">Stored token: <code>${getStoredAccessToken() ? "Present" : "None"}</code></p>
+          <p class="meta">API base URL: <code>${escapeHtml(getApiBaseUrl())}</code></p>
+          ${state.health ? `<p class="${state.health.status === "ok" ? "success" : "error"}">API health: ${escapeHtml(state.health.status)}</p>` : ""}
+        </div>
+      </details>
     <nav class="bottom-tabs" aria-label="Bottom navigation tabs">
-      ${ROUTE_META.map((item) => navLink(item.route, item.label, item.icon, "tab")).join("")}
+      ${primaryTabs.map((item) => navLink(item.route, item.label, item.icon, "tab")).join("")}
     </nav>
     </div>
   `;
@@ -357,12 +375,13 @@ function renderLayout(content) {
 
 function navLink(route, label, Icon, style = "pill") {
   const active = state.route === route ? "active" : "";
-  const icon = renderToStaticMarkup(React.createElement(Icon, { size: 16, strokeWidth: 2 }));
+  const iconSize = style === "tab" ? 18 : 16;
+  const icon = renderToStaticMarkup(React.createElement(Icon, { size: iconSize, strokeWidth: 2 }));
   return `<a class="${style} ${active}" href="#/${route}" aria-label="${escapeHtml(label)}">${icon}<span>${label}</span></a>`;
 }
 
-function card(title, body) {
-  return `<article class="card"><h2>${title}</h2>${body}</article>`;
+function card(title, body, className = "") {
+  return `<article class="card ${className}"><h2>${title}</h2>${body}</article>`;
 }
 
 function renderDashboard() {
@@ -375,7 +394,7 @@ function renderDashboard() {
 
   return `
     ${card("Sign in", `
-      <p>Authenticate against the backend and we will resolve your user identity via <code>/auth/me</code>.</p>
+      <p class="meta">Authenticate with your account to enable syncing and editing.</p>
       <form id="login-form" class="form-grid">
         <label>Email address
           <input name="email" type="email" value="${escapeHtml(state.authForm.email)}" autocomplete="email" required />
@@ -383,22 +402,19 @@ function renderDashboard() {
         <label>Password
           <input name="password" type="password" value="${escapeHtml(state.authForm.password)}" autocomplete="current-password" required />
         </label>
-        <button type="submit">${state.loading && !currentUserId() ? "Signing in..." : "Sign in"}</button>
+        <button type="submit" class="button button-primary button-block">${state.loading && !currentUserId() ? "Signing in..." : "Sign in"}</button>
       </form>
-    `)}
-    ${card("Home", `
-      <p>Track meals and keep a practical view of what is in your cupboard.</p>
+    `, "card-soft")}
+    ${card("Quick actions", `
+      <p class="meta">Move quickly between common tasks.</p>
       <div class="actions">
-        <a class="button" href="#/log-food">Log food</a>
-        <a class="button secondary" href="#/cupboard">View cupboard</a>
-        <a class="button secondary" href="#/add-cupboard-item">Add cupboard item</a>
-        <a class="button secondary" href="#/add-ingredient">Add ingredient</a>
-        <a class="button secondary" href="#/ingredients">Ingredients list</a>
-        <a class="button secondary" href="#/recipes">Recipes</a>
-        <a class="button secondary" href="#/add-recipe">Add recipe</a>
+        <a class="button button-primary" href="#/log-food">Log food</a>
+        <a class="button button-secondary" href="#/add-cupboard-item">Add cupboard item</a>
+        <a class="button button-secondary" href="#/add-ingredient">Add ingredient</a>
+        <a class="button button-secondary" href="#/add-recipe">Add recipe</a>
       </div>
-    `)}
-    ${card("Recent food entries", previewHtml)}
+    `, "card-soft")}
+    ${card("Recent food entries", previewHtml, "card-soft")}
   `;
 }
 
@@ -425,9 +441,9 @@ function renderFoodForm() {
       <label>Rating (1-5)
         <input name="rating" type="number" min="1" max="5" value="${escapeHtml(state.foodForm.rating)}" />
       </label>
-      <button type="submit">${state.loading ? "Saving..." : "Save food entry"}</button>
+      <button type="submit" class="button button-primary button-block">${state.loading ? "Saving..." : "Save food entry"}</button>
     </form>
-  `);
+  `, "card-soft");
 }
 
 function renderEntries() {
@@ -444,7 +460,7 @@ function renderEntries() {
   }
 
   return card("Food entries", `
-    <ul class="list">
+    <ul class="list list-polished">
       ${state.foodEntries
         .map((entry) => `
           <li>
@@ -454,7 +470,7 @@ function renderEntries() {
         `)
         .join("")}
     </ul>
-  `);
+  `, "card-soft");
 }
 
 function renderCupboardRows() {
@@ -474,7 +490,7 @@ function renderCupboardRows() {
     return "<p class='empty'>No cupboard items yet. Add one to get started.</p>";
   }
 
-  return `<ul class="list">${state.cupboardItems.map((item) => {
+  return `<ul class="list list-polished">${state.cupboardItems.map((item) => {
     const isEditing = state.cupboardEditingId === item.id;
     if (isEditing) {
       return `
@@ -495,8 +511,8 @@ function renderCupboardRows() {
               <input name="shelf_name" value="${escapeHtml(item.shelf_name || "")}" />
             </label>
             <div class="actions">
-              <button type="submit">Save update</button>
-              <button type="button" class="cupboard-cancel-edit">Cancel</button>
+              <button type="submit" class="button button-primary">Save update</button>
+              <button type="button" class="button button-secondary cupboard-cancel-edit">Cancel</button>
             </div>
           </form>
         </li>
@@ -508,8 +524,8 @@ function renderCupboardRows() {
         <div><strong>${escapeHtml(item.ingredient_display_name || item.ingredient_canonical_name || item.ingredient_id)}</strong></div>
         <div class="meta">Qty: ${escapeHtml(item.quantity ?? "n/a")} ${escapeHtml(item.unit || "")} · Status: ${escapeHtml(item.stock_status || "n/a")} · Shelf: ${escapeHtml(item.shelf_name || "n/a")}</div>
         <div class="actions">
-          <button type="button" class="cupboard-edit" data-item-id="${item.id}">Edit</button>
-          <button type="button" class="cupboard-delete" data-item-id="${item.id}">Delete</button>
+          <button type="button" class="button button-secondary cupboard-edit" data-item-id="${item.id}">Edit</button>
+          <button type="button" class="button button-danger cupboard-delete" data-item-id="${item.id}">Delete</button>
         </div>
       </li>
     `;
@@ -518,14 +534,14 @@ function renderCupboardRows() {
 
 function renderCupboard() {
   return card("Cupboard", `
-    <p>Manage your cupboard items with full create/read/update/delete support.</p>
+    <p class="meta">Manage quantities, stock state, and shelf placement.</p>
     <div class="actions">
-      <a class="button" href="#/add-cupboard-item">Add cupboard item</a>
-      <button id="refresh-cupboard" type="button" ${state.cupboardLoading ? "disabled" : ""}>${state.cupboardLoading ? "Refreshing..." : "Refresh"}</button>
+      <a class="button button-primary" href="#/add-cupboard-item">Add cupboard item</a>
+      <button id="refresh-cupboard" type="button" class="button button-secondary" ${state.cupboardLoading ? "disabled" : ""}>${state.cupboardLoading ? "Refreshing..." : "Refresh"}</button>
     </div>
     ${state.cupboardSuccess ? `<p class="success">${escapeHtml(state.cupboardSuccess)}</p>` : ""}
     ${renderCupboardRows()}
-  `);
+  `, "card-soft");
 }
 
 function renderAddCupboardItem() {
@@ -558,9 +574,9 @@ function renderAddCupboardItem() {
       <label>Shelf name
         <input name="shelf_name" value="${escapeHtml(state.cupboardForm.shelf_name)}" placeholder="e.g. Pantry" />
       </label>
-      <button type="submit" ${hasIngredients && !state.cupboardSubmitting ? "" : "disabled"}>${state.cupboardSubmitting ? "Adding..." : "Add cupboard item"}</button>
+      <button type="submit" class="button button-primary button-block" ${hasIngredients && !state.cupboardSubmitting ? "" : "disabled"}>${state.cupboardSubmitting ? "Adding..." : "Add cupboard item"}</button>
     </form>
-  `);
+  `, "card-soft");
 }
 
 function renderAddIngredient() {
@@ -587,9 +603,9 @@ function renderAddIngredient() {
           placeholder="comma-separated months, e.g. 6,7,8,9"
         />
       </label>
-      <button type="submit">${state.loading ? "Creating..." : "Create ingredient"}</button>
+      <button type="submit" class="button button-primary button-block">${state.loading ? "Creating..." : "Create ingredient"}</button>
     </form>
-  `);
+  `, "card-soft");
 }
 
 function toIngredientDetailRoute(ingredientId) {
@@ -605,25 +621,25 @@ function renderIngredientsList() {
     return card("Ingredients list", `
       <p class="empty">No ingredients found.</p>
       <div class="actions">
-        <a class="button" href="#/add-ingredient">Add ingredient</a>
+        <a class="button button-primary" href="#/add-ingredient">Add ingredient</a>
       </div>
     `);
   }
 
   return card("Ingredients list", `
     <p class="meta">View all ingredients and open one to edit details.</p>
-    <ul class="list">
+    <ul class="list list-polished">
       ${state.ingredients.map((ingredient) => `
         <li>
           <div><strong>${escapeHtml(ingredient.display_name)}</strong></div>
           <div class="meta">${escapeHtml(ingredient.canonical_name)} · Category: ${escapeHtml(ingredient.category || "uncategorized")}</div>
           <div class="actions">
-            <a class="button secondary" href="${toIngredientDetailRoute(ingredient.id)}">View details</a>
+            <a class="button button-secondary" href="${toIngredientDetailRoute(ingredient.id)}">View details</a>
           </div>
         </li>
       `).join("")}
     </ul>
-  `);
+  `, "card-soft");
 }
 
 function renderIngredientDetail() {
@@ -655,11 +671,11 @@ function renderIngredientDetail() {
         <input name="seasonal_months" value="${escapeHtml(state.ingredientDetailForm.seasonal_months)}" placeholder="comma-separated months, e.g. 6,7,8,9" />
       </label>
       <div class="actions">
-        <button type="submit">${state.loading ? "Saving..." : "Save changes"}</button>
-        <button type="button" id="delete-ingredient" ${state.loading ? "disabled" : ""}>Delete ingredient</button>
+        <button type="submit" class="button button-primary">${state.loading ? "Saving..." : "Save changes"}</button>
+        <button type="button" id="delete-ingredient" class="button button-danger" ${state.loading ? "disabled" : ""}>Delete ingredient</button>
       </div>
     </form>
-  `);
+  `, "card-soft");
 }
 
 function toRecipeDetailRoute(recipeId) {
@@ -675,7 +691,7 @@ function renderRecipesList() {
     return card("Recipes", `
       <p class="empty">No recipes found.</p>
       <div class="actions">
-        <a class="button" href="#/add-recipe">Add recipe</a>
+        <a class="button button-primary" href="#/add-recipe">Add recipe</a>
       </div>
     `);
   }
@@ -683,18 +699,18 @@ function renderRecipesList() {
   return card("Recipes", `
     <p class="meta">Browse, view, and edit recipes.</p>
     <p class="meta">Total recipes: ${state.recipesMeta.total}</p>
-    <ul class="list">
+    <ul class="list list-polished">
       ${state.recipes.map((recipe) => `
         <li>
           <div><strong>${escapeHtml(recipe.title)}</strong></div>
           <div class="meta">${escapeHtml(recipe.description || "No description")}</div>
           <div class="actions">
-            <a class="button secondary" href="${toRecipeDetailRoute(recipe.id)}">View details</a>
+            <a class="button button-secondary" href="${toRecipeDetailRoute(recipe.id)}">View details</a>
           </div>
         </li>
       `).join("")}
     </ul>
-  `);
+  `, "card-soft");
 }
 
 function renderAddRecipe() {
@@ -717,9 +733,9 @@ function renderAddRecipe() {
         <input name="is_system" type="checkbox" ${state.recipeForm.is_system ? "checked" : ""} />
         System recipe
       </label>
-      <button type="submit">${state.loading ? "Creating..." : "Create recipe"}</button>
+      <button type="submit" class="button button-primary button-block">${state.loading ? "Creating..." : "Create recipe"}</button>
     </form>
-  `);
+  `, "card-soft");
 }
 
 function renderRecipeDetail() {
@@ -754,11 +770,11 @@ function renderRecipeDetail() {
         System recipe
       </label>
       <div class="actions">
-        <button type="submit">${state.loading ? "Saving..." : "Save changes"}</button>
-        <button type="button" id="delete-recipe" ${state.loading ? "disabled" : ""}>Delete recipe</button>
+        <button type="submit" class="button button-primary">${state.loading ? "Saving..." : "Save changes"}</button>
+        <button type="button" id="delete-recipe" class="button button-danger" ${state.loading ? "disabled" : ""}>Delete recipe</button>
       </div>
     </form>
-  `);
+  `, "card-soft");
 }
 
 function attachEvents() {
