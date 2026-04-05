@@ -1,6 +1,7 @@
 import {
   ApiError,
   createUserFoodEntry,
+  createIngredient,
   getApiBaseUrl,
   getUserFoodEntries,
   getIngredients,
@@ -52,6 +53,13 @@ const state = {
     unit: "",
     stock_status: "in_stock",
     shelf_name: "",
+  },
+  ingredientForm: {
+    canonical_name: "",
+    display_name: "",
+    category: "veg",
+    is_seasonal: false,
+    seasonal_months: "",
   },
   authForm: {
     email: "",
@@ -123,6 +131,7 @@ function renderLayout(content) {
       ${navLink("entries", "Food entries")}
       ${navLink("cupboard", "Cupboard")}
       ${navLink("add-cupboard-item", "Add cupboard item")}
+      ${navLink("add-ingredient", "Add ingredient")}
     </nav>
     <section class="settings card">
       <h2>Session</h2>
@@ -276,6 +285,35 @@ function renderAddCupboardItem() {
   `);
 }
 
+function renderAddIngredient() {
+  return card("Add ingredient", `
+    <p class="meta">Create a new ingredient in the shared ingredient catalog.</p>
+    <form id="ingredient-form" class="form-grid">
+      <label>Canonical name *
+        <input name="canonical_name" value="${escapeHtml(state.ingredientForm.canonical_name)}" required placeholder="e.g. broccoli" />
+      </label>
+      <label>Display name *
+        <input name="display_name" value="${escapeHtml(state.ingredientForm.display_name)}" required placeholder="e.g. Broccoli" />
+      </label>
+      <label>Category *
+        <input name="category" value="${escapeHtml(state.ingredientForm.category)}" required placeholder="e.g. veg" />
+      </label>
+      <label class="inline-checkbox">
+        <input name="is_seasonal" type="checkbox" ${state.ingredientForm.is_seasonal ? "checked" : ""} />
+        Is seasonal
+      </label>
+      <label>Seasonal months
+        <input
+          name="seasonal_months"
+          value="${escapeHtml(state.ingredientForm.seasonal_months)}"
+          placeholder="comma-separated months, e.g. 6,7,8,9"
+        />
+      </label>
+      <button type="submit">Create ingredient</button>
+    </form>
+  `);
+}
+
 function attachEvents() {
   const loginForm = document.querySelector("#login-form");
   if (loginForm) {
@@ -292,6 +330,11 @@ function attachEvents() {
     cupboardForm.addEventListener("submit", (event) => {
       event.preventDefault();
     });
+  }
+
+  const ingredientForm = document.querySelector("#ingredient-form");
+  if (ingredientForm) {
+    ingredientForm.addEventListener("submit", onSubmitIngredient);
   }
 }
 
@@ -363,6 +406,73 @@ async function onSubmitFoodEntry(event) {
   }
 }
 
+async function onSubmitIngredient(event) {
+  event.preventDefault();
+  const userId = getUserId();
+  if (!userId) {
+    state.feedback = "Log in before adding ingredients.";
+    render();
+    return;
+  }
+
+  const formData = new FormData(event.target);
+  const isSeasonal = formData.get("is_seasonal") === "on";
+  const seasonalMonthsRaw = (formData.get("seasonal_months") || "").toString().trim();
+  const seasonalMonths = seasonalMonthsRaw
+    ? seasonalMonthsRaw
+      .split(",")
+      .map((value) => Number(value.trim()))
+      .filter((value) => Number.isInteger(value) && value >= 1 && value <= 12)
+    : [];
+
+  const payload = {
+    canonical_name: (formData.get("canonical_name") || "").toString().trim(),
+    display_name: (formData.get("display_name") || "").toString().trim(),
+    category: (formData.get("category") || "").toString().trim(),
+    is_seasonal: isSeasonal,
+    seasonal_months: isSeasonal ? seasonalMonths : [],
+  };
+
+  state.ingredientForm = {
+    canonical_name: payload.canonical_name,
+    display_name: payload.display_name,
+    category: payload.category,
+    is_seasonal: payload.is_seasonal,
+    seasonal_months: seasonalMonthsRaw,
+  };
+
+  if (!payload.canonical_name || !payload.display_name || !payload.category) {
+    state.feedback = "Canonical name, display name, and category are required.";
+    render();
+    return;
+  }
+
+  if (isSeasonal && !seasonalMonths.length && seasonalMonthsRaw) {
+    state.feedback = "Seasonal months must be comma-separated numbers from 1 to 12.";
+    render();
+    return;
+  }
+
+  try {
+    state.feedback = "Creating ingredient...";
+    render();
+    await createIngredient(payload);
+    state.ingredientForm = {
+      canonical_name: "",
+      display_name: "",
+      category: "veg",
+      is_seasonal: false,
+      seasonal_months: "",
+    };
+    state.feedback = "Ingredient created.";
+    await loadIngredients();
+    render();
+  } catch (error) {
+    state.feedback = `Could not create ingredient: ${error.message}`;
+    render();
+  }
+}
+
 async function loadHealth() {
   try {
     state.health = await healthCheck();
@@ -403,6 +513,7 @@ function render() {
   if (state.route === "entries") content = renderEntries();
   if (state.route === "cupboard") content = renderCupboard();
   if (state.route === "add-cupboard-item") content = renderAddCupboardItem();
+  if (state.route === "add-ingredient") content = renderAddIngredient();
 
   const banner = state.feedback ? `<section class="card notice">${escapeHtml(state.feedback)}</section>` : "";
   renderLayout(`${banner}${content}`);
