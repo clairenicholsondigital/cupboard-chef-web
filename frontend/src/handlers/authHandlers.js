@@ -13,6 +13,7 @@ export async function handleSubmitLogin(event, deps) {
     loadFoodEntries,
     loadCupboardItems,
     loadRecipes,
+    loadShoppingLists,
   } = deps;
 
   event.preventDefault();
@@ -56,7 +57,12 @@ export async function handleSubmitLogin(event, deps) {
     storeCurrentUser(state.currentUser);
 
     setFeedback("success", `Signed in as ${identity.email}.`);
-    await Promise.all([loadFoodEntries(false), loadCupboardItems(false), loadRecipes?.(false)]);
+    await Promise.all([
+      loadFoodEntries(false),
+      loadCupboardItems(false),
+      loadRecipes?.(false),
+      loadShoppingLists?.(false),
+    ]);
     window.location.hash = "#/dashboard";
   } catch (error) {
     clearLocalSession();

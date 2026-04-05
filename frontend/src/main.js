@@ -1288,6 +1288,7 @@ async function onSubmitLogin(event) {
     loadFoodEntries,
     loadCupboardItems,
     loadRecipes,
+    loadShoppingLists,
   });
 }
 
@@ -1805,6 +1806,7 @@ async function bootstrap() {
 }
 
 window.addEventListener("hashchange", async () => {
+  try {
   setRouteFromHash();
   const hashParams = new URLSearchParams(window.location.hash.split("?")[1] || "");
   state.selectedIngredientId = hashParams.get("id") || "";
@@ -1846,6 +1848,15 @@ window.addEventListener("hashchange", async () => {
 
   clearFeedback();
   render();
+  } catch (error) {
+    setFeedback("error", `App navigation failed: ${error.message}`);
+    render();
+  }
 });
 
-bootstrap();
+bootstrap().catch((error) => {
+  const app = document.querySelector("#app");
+  if (app) {
+    app.innerHTML = `<section class="card error"><h2>App failed to load</h2><p>${escapeHtml(error?.message || "Unknown error")}</p></section>`;
+  }
+});
