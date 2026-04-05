@@ -106,8 +106,24 @@ function getLoginErrorMessage(error) {
 }
 
 function setRouteFromHash() {
-  const value = window.location.hash.replace(/^#\/?/, "") || "dashboard";
-  state.route = value;
+  const hashRoute = window.location.hash.replace(/^#\/?/, "");
+  if (hashRoute) {
+    state.route = hashRoute;
+    return;
+  }
+
+  const pathnameRouteMap = {
+    "/": "dashboard",
+    "/dashboard": "dashboard",
+    "/ingredients": "add-ingredient",
+    "/add-ingredient": "add-ingredient",
+    "/log-food": "log-food",
+    "/entries": "entries",
+    "/cupboard": "cupboard",
+    "/add-cupboard-item": "add-cupboard-item",
+  };
+
+  state.route = pathnameRouteMap[window.location.pathname] || "dashboard";
 }
 
 function escapeHtml(value) {
@@ -187,6 +203,7 @@ function renderDashboard() {
         <a class="button" href="#/log-food">Log food</a>
         <a class="button secondary" href="#/cupboard">View cupboard</a>
         <a class="button secondary" href="#/add-cupboard-item">Add cupboard item</a>
+        <a class="button secondary" href="/ingredients">Add ingredient</a>
       </div>
     `)}
     ${card("Recent food entries", previewHtml)}
