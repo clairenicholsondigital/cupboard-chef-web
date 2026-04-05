@@ -24,6 +24,10 @@ body {
   padding: 1rem;
 }
 
+.app-mobile-shell {
+  padding-bottom: 6rem;
+}
+
 .header {
   padding: 0.25rem 0;
 }
@@ -51,6 +55,53 @@ body {
 .nav a.active {
   background: var(--accent);
   color: #fff;
+}
+
+.pill,
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.pill svg,
+.tab svg {
+  flex-shrink: 0;
+}
+
+.bottom-tabs {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 0.75rem;
+  width: min(880px, calc(100vw - 1rem));
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(90px, 1fr);
+  gap: 0.45rem;
+  overflow-x: auto;
+  padding: 0.45rem;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 10px 32px rgba(15, 23, 42, 0.18);
+  z-index: 10;
+}
+
+.bottom-tabs .tab {
+  text-decoration: none;
+  color: var(--muted);
+  border-radius: 11px;
+  justify-content: center;
+  padding: 0.5rem 0.4rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.bottom-tabs .tab.active {
+  color: #fff;
+  background: var(--accent);
 }
 
 .card {
@@ -150,5 +201,10 @@ button[disabled] {
 @media (max-width: 640px) {
   .app-shell {
     padding: 0.75rem;
+  }
+
+  .bottom-tabs {
+    width: calc(100vw - 0.75rem);
+    bottom: 0.35rem;
   }
 }
