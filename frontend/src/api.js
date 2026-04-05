@@ -191,6 +191,15 @@ export function createUserAiSuggestion(userId, data) {
   });
 }
 
+export function getCurrentUser(subject) {
+  return request("/auth/me", {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${subject}`,
+    },
+  });
+}
+
 export function loginWithEmail(data) {
   return request("/auth/login", {
     method: "POST",
