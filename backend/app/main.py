@@ -12,37 +12,30 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from app.recipe_routes import router as recipe_router
 from app.shopping_routes import router as shopping_router
+from app.mobile_api_routes import router as mobile_api_router
 from app.db import get_conn
 
 
 app = FastAPI(title="Cupboard Chef API")
 app.include_router(recipe_router)
 app.include_router(shopping_router)
+app.include_router(mobile_api_router)
 
 
-DEFAULT_ALLOWED_ORIGINS = [
-    "https://helixscribe.cloud",
-    "https://www.helixscribe.cloud",
-    "https://food.helixscribe.cloud",
-    "https://www.food.helixscribe.cloud",
-    "http://localhost:5173",
-    "http://localhost:3000",
-]
+DEFAULT_ALLOWED_ORIGINS = ["*"]
 
-allowed_origins = [
-    origin.strip()
-    for origin in os.getenv(
-        "CORS_ALLOWED_ORIGINS",
-        ",".join(DEFAULT_ALLOWED_ORIGINS),
-    ).split(",")
-    if origin.strip()
-]
+cors_env_value = os.getenv("ALLOWED_ORIGINS") or os.getenv("CORS_ORIGIN") or os.getenv(
+    "CORS_ALLOWED_ORIGINS",
+    ",".join(DEFAULT_ALLOWED_ORIGINS),
+)
+
+allowed_origins = [origin.strip() for origin in cors_env_value.split(",") if origin.strip()] or ["*"]
+allow_all_origins = "*" in allowed_origins
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_origin_regex=r"https://([a-z0-9-]+\.)?helixscribe\.cloud",
-    allow_credentials=True,
+    allow_origins=["*"] if allow_all_origins else allowed_origins,
+    allow_credentials=False if allow_all_origins else True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -379,7 +372,7 @@ class AppEventOut(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"ok": True, "service": "cupboard-chef-api", "version": "1.0.0"}
 
 
 # -------------------------------------------------------------------
