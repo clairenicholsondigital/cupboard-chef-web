@@ -38,7 +38,15 @@ class FoodWasteScoreRequest(BaseModel):
     useFirst: Optional[List[str]] = None
 
 
-def _norm(value: str) -> str:
+class CookNextRequest(BaseModel):
+    ingredients: List[str] = Field(default_factory=list)
+    dietary: Optional[List[str]] = None
+    timeMinutes: Optional[int] = Field(default=30, ge=1)
+    useFirst: Optional[List[str]] = None
+    servings: Optional[int] = Field(default=2, ge=1)
+
+
+def normalise_ingredient_name(value: str) -> str:
     return " ".join(value.strip().lower().split())
 
 
@@ -48,10 +56,55 @@ def _clean_string_list(values: Optional[List[str]]) -> List[str]:
     cleaned: List[str] = []
     for value in values:
         if isinstance(value, str):
-            item = _norm(value)
+            item = normalise_ingredient_name(value)
             if item:
                 cleaned.append(item)
     return cleaned
+
+
+def score_recipe_for_cook_next(recipe: Dict[str, Any], ingredient_set: set[str], dietary: set[str], use_first: set[str], time_limit: int) -> Dict[str, Any]:
+    recipe_dietary = set(recipe.get("dietary", []))
+    dietary_match = not dietary or dietary.issubset(recipe_dietary)
+    uses = [item for item in recipe["base"] if item in ingredient_set]
+    missing = [item for item in recipe["base"] if item not in ingredient_set]
+    use_first_hits = len([item for item in uses if item in use_first])
+    within_time = time_limit >= (20 if len(missing) <= 1 else 30)
+
+    score = use_first_hits * 35 + len(uses) * 12 - len(missing) * 6
+    score += 10 if within_time else -8
+    score += 12 if dietary_match else -20
+    return {
+        "template": recipe,
+        "uses": uses,
+        "missing": missing,
+        "use_first_hits": use_first_hits,
+        "dietary_match": dietary_match,
+        "within_time": within_time,
+        "score": score,
+    }
+
+
+def build_cook_next_reason(best_recipe: Dict[str, Any], time_limit: int) -> str:
+    parts: List[str] = []
+    if best_recipe["use_first_hits"] > 0:
+        parts.append(f"Uses {best_recipe['use_first_hits']} priority use-first ingredient(s)")
+    if best_recipe["within_time"]:
+        parts.append(f"fits your {time_limit} minute limit")
+    if best_recipe["uses"]:
+        parts.append("uses ingredients you already have")
+    if best_recipe["missing"]:
+        parts.append(f"only needs {len(best_recipe['missing'])} extra ingredient(s)")
+    return ", ".join(parts[:-1]) + (", and " if len(parts) > 1 else "") + parts[-1] + "."
+
+
+def calculate_confidence(best_recipe: Dict[str, Any], total_ingredients: int) -> float:
+    coverage = len(best_recipe["uses"]) / max(1, (len(best_recipe["uses"]) + len(best_recipe["missing"])))
+    priority_bonus = min(0.25, best_recipe["use_first_hits"] * 0.12)
+    dietary_bonus = 0.08 if best_recipe["dietary_match"] else -0.12
+    time_bonus = 0.06 if best_recipe["within_time"] else -0.04
+    ingredient_signal = min(0.08, total_ingredients * 0.01)
+    confidence = 0.45 + coverage * 0.3 + priority_bonus + dietary_bonus + time_bonus + ingredient_signal
+    return round(max(0.2, min(0.98, confidence)), 2)
 
 
 SWAPS: Dict[str, List[str]] = {
@@ -192,7 +245,7 @@ def generate_shopping_list(payload: ShoppingListRequest):
     for recipe in payload.selectedRecipes or []:
         for missing in recipe.get("missing", []) if isinstance(recipe, dict) else []:
             if isinstance(missing, str):
-                item = _norm(missing)
+                item = normalise_ingredient_name(missing)
                 if item:
                     items.add(item)
 
@@ -224,6 +277,63 @@ def suggest_swaps(payload: SwapsRequest):
         for ingredient in cleaned
     ]
     return {"swaps": swaps}
+
+
+@router.post("/api/cook-next")
+def cook_next(payload: CookNextRequest):
+    ingredients = _clean_string_list(payload.ingredients)
+    if not ingredients:
+        return {
+            "ok": False,
+            "message": "Add a few ingredients you have and I will pick your best next meal.",
+            "sampleIngredients": ["pasta", "eggs", "tomatoes", "spinach"],
+            "shoppingList": [],
+            "swaps": [],
+        }
+
+    ingredient_set = set(ingredients)
+    dietary = set(_clean_string_list(payload.dietary))
+    use_first = set(_clean_string_list(payload.useFirst))
+    time_limit = payload.timeMinutes or 30
+    servings = payload.servings or 2
+
+    ranked = [score_recipe_for_cook_next(recipe, ingredient_set, dietary, use_first, time_limit) for recipe in RULE_RECIPES]
+    ranked.sort(key=lambda item: (item["score"], item["use_first_hits"], len(item["uses"]), -len(item["missing"])), reverse=True)
+    best = ranked[0]
+
+    shopping_list = sorted(set(best["missing"]))
+    swaps = [
+        {"ingredient": ingredient, "options": SWAPS.get(ingredient, ["Use a similar ingredient you already have", "Skip if optional", "Add to shopping list"])}
+        for ingredient in shopping_list
+    ]
+
+    if use_first:
+        hits = len(set(best["uses"]).intersection(use_first))
+        score = int(max(0, min(100, (hits / len(use_first)) * 100)))
+    else:
+        score = 60
+    waste_message = (
+        "Good choice: this uses one priority ingredient."
+        if score >= 50
+        else "Solid choice: uses what you have and helps reduce food waste."
+    )
+
+    return {
+        "ok": True,
+        "recommendation": {
+            "title": best["template"]["title"],
+            "reason": build_cook_next_reason(best, time_limit),
+            "confidence": calculate_confidence(best, len(ingredients)),
+            "timeMinutes": min(time_limit, 30 if len(shopping_list) > 1 else 20),
+            "servings": servings,
+            "ingredientsUsed": best["uses"],
+            "missingIngredients": shopping_list,
+            "steps": best["template"]["method"],
+        },
+        "wasteScore": {"score": score, "message": waste_message},
+        "shoppingList": shopping_list,
+        "swaps": swaps,
+    }
 
 
 @router.post("/api/food-waste-score")
