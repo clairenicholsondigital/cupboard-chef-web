@@ -96,6 +96,7 @@ class AppUserCreate(BaseModel):
     email: str = Field(..., min_length=3)
     display_name: Optional[str] = None
     auth_user_id: Optional[UUID] = None
+    password: Optional[str] = Field(default=None, min_length=8)
 
 
 class AppUserOut(BaseModel):
@@ -651,21 +652,53 @@ def auth_me(authenticated_user: Dict[str, Any] = Depends(resolve_authenticated_u
 @app.post("/users", response_model=AppUserOut)
 def create_user(payload: AppUserCreate):
     email = payload.email.strip().lower()
+    password = payload.password.strip() if payload.password else None
 
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    insert into app_users (auth_user_id, email, display_name)
-                    values (%s, %s, %s)
+                    select column_name
+                    from information_schema.columns
+                    where table_schema = current_schema()
+                      and table_name = 'app_users'
+                      and column_name in ('password_hash', 'password')
+                    """
+                )
+                columns = {row[0] for row in cur.fetchall()}
+
+                insert_columns = ["auth_user_id", "email", "display_name"]
+                insert_values: List[Any] = [
+                    str(payload.auth_user_id) if payload.auth_user_id else None,
+                    email,
+                    payload.display_name,
+                ]
+
+                if password:
+                    if "password_hash" in columns:
+                        password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+                        insert_columns.append("password_hash")
+                        insert_values.append(password_hash)
+                    elif "password" in columns:
+                        insert_columns.append("password")
+                        insert_values.append(password)
+                    else:
+                        raise HTTPException(
+                            status_code=500,
+                            detail="Password storage is not configured for app_users. Add password_hash column.",
+                        )
+
+                values_placeholders = ", ".join(["%s"] * len(insert_values))
+                column_sql = ", ".join(insert_columns)
+
+                cur.execute(
+                    f"""
+                    insert into app_users ({column_sql})
+                    values ({values_placeholders})
                     returning id, auth_user_id, email, display_name, created_at::text, updated_at::text
                     """,
-                    (
-                        str(payload.auth_user_id) if payload.auth_user_id else None,
-                        email,
-                        payload.display_name,
-                    ),
+                    tuple(insert_values),
                 )
                 row = cur.fetchone()
             conn.commit()
