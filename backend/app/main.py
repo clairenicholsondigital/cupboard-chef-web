@@ -17,6 +17,15 @@ from app.db import get_conn
 
 
 app = FastAPI(title="Cupboard Chef API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(recipe_router)
 app.include_router(shopping_router)
 app.include_router(mobile_api_router)
@@ -35,16 +44,11 @@ cors_env_value = os.getenv("ALLOWED_ORIGINS") or os.getenv("CORS_ORIGIN") or os.
     "CORS_ALLOWED_ORIGINS",
     ",".join(DEFAULT_ALLOWED_ORIGINS),
 )
+allow_all_origins = "*" in cors_env_value
 
 allowed_origins = [origin.strip() for origin in cors_env_value.split(",") if origin.strip()]
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"] if allow_all_origins else allowed_origins,
-    allow_credentials=False if allow_all_origins else True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+
 
 
 # -------------------------------------------------------------------
