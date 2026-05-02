@@ -12,12 +12,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from app.recipe_routes import router as recipe_router
 from app.shopping_routes import router as shopping_router
+from app.mobile_api_routes import router as mobile_api_router
 from app.db import get_conn
 
 
 app = FastAPI(title="Cupboard Chef API")
 app.include_router(recipe_router)
 app.include_router(shopping_router)
+app.include_router(mobile_api_router)
 
 
 DEFAULT_ALLOWED_ORIGINS = [
@@ -29,14 +31,12 @@ DEFAULT_ALLOWED_ORIGINS = [
     "http://localhost:3000",
 ]
 
-allowed_origins = [
-    origin.strip()
-    for origin in os.getenv(
-        "CORS_ALLOWED_ORIGINS",
-        ",".join(DEFAULT_ALLOWED_ORIGINS),
-    ).split(",")
-    if origin.strip()
-]
+cors_env_value = os.getenv("ALLOWED_ORIGINS") or os.getenv("CORS_ORIGIN") or os.getenv(
+    "CORS_ALLOWED_ORIGINS",
+    ",".join(DEFAULT_ALLOWED_ORIGINS),
+)
+
+allowed_origins = [origin.strip() for origin in cors_env_value.split(",") if origin.strip()]
 
 app.add_middleware(
     CORSMiddleware,
@@ -379,7 +379,7 @@ class AppEventOut(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"ok": True, "service": "cupboard-chef-api", "version": "1.0.0"}
 
 
 # -------------------------------------------------------------------
