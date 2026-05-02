@@ -22,15 +22,21 @@ app.include_router(shopping_router)
 app.include_router(mobile_api_router)
 
 
-DEFAULT_ALLOWED_ORIGINS = ["*"]
+DEFAULT_ALLOWED_ORIGINS = [
+    "https://helixscribe.cloud",
+    "https://www.helixscribe.cloud",
+    "https://food.helixscribe.cloud",
+    "https://www.food.helixscribe.cloud",
+    "http://localhost:5173",
+    "http://localhost:3000",
+]
 
 cors_env_value = os.getenv("ALLOWED_ORIGINS") or os.getenv("CORS_ORIGIN") or os.getenv(
     "CORS_ALLOWED_ORIGINS",
     ",".join(DEFAULT_ALLOWED_ORIGINS),
 )
 
-allowed_origins = [origin.strip() for origin in cors_env_value.split(",") if origin.strip()] or ["*"]
-allow_all_origins = "*" in allowed_origins
+allowed_origins = [origin.strip() for origin in cors_env_value.split(",") if origin.strip()]
 
 app.add_middleware(
     CORSMiddleware,

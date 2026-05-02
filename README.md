@@ -13,7 +13,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 3000
 
 ## Environment variables
 - `DATABASE_URL` - Postgres connection string
-- `ALLOWED_ORIGINS` or `CORS_ORIGIN` or `CORS_ALLOWED_ORIGINS` - comma-separated CORS allowlist (`*` allowed, default is `*`)
+- `ALLOWED_ORIGINS` or `CORS_ORIGIN` or `CORS_ALLOWED_ORIGINS` - comma-separated CORS allowlist
 - `AUTH_TOKEN_SECRET` - auth token signing secret
 - `AUTH_TOKEN_TTL_SECONDS` - token ttl seconds
 
