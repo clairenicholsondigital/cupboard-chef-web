@@ -23,6 +23,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 3000
 - `POST /api/shopping-list`
 - `POST /api/swaps`
 - `POST /api/food-waste-score`
+- `POST /api/cook-next`
 
 ## Existing core endpoints (selected)
 - Auth: `/auth/login`, `/auth/me`
@@ -51,6 +52,16 @@ curl -s -X POST http://localhost:3000/api/swaps \
 curl -s -X POST http://localhost:3000/api/food-waste-score \
   -H "Content-Type: application/json" \
   -d '{"ingredients":["spinach","tomatoes","cheese"],"useFirst":["spinach"]}'
+
+curl -s -X POST http://localhost:3000/api/cook-next \
+  -H "Content-Type: application/json" \
+  -d '{"ingredients":["pasta","tomatoes","spinach","cheese"],"dietary":["vegetarian"],"timeMinutes":20,"useFirst":["spinach"],"servings":2}'
+```
+
+## Quick local checks
+```bash
+python -m py_compile backend/app/main.py backend/app/mobile_api_routes.py
+curl -s http://localhost:3000/health
 ```
 
 ## SQL migrations
