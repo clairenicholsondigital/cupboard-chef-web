@@ -40,9 +40,8 @@ allowed_origins = [origin.strip() for origin in cors_env_value.split(",") if ori
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_origin_regex=r"https://([a-z0-9-]+\.)?helixscribe\.cloud",
-    allow_credentials=True,
+    allow_origins=["*"] if allow_all_origins else allowed_origins,
+    allow_credentials=False if allow_all_origins else True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
